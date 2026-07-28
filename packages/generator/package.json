@@ -1,0 +1,18 @@
+{
+  "name": "@obs/generator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "backfill": "tsx src/index.ts backfill",
+    "live": "tsx src/index.ts live",
+    "inject": "tsx src/index.ts inject"
+  },
+  "dependencies": {
+    "@obs/shared": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2"
+  }
+}
