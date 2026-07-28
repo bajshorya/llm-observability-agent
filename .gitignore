@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local database — regenerate with `pnpm db:push`
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# Secrets — never commit real keys
+.env
+.env.local
+.env.*.local
+
+.DS_Store
+*.log
+
+# Local editor/tool settings — machine-specific
+.claude/settings.local.json
+.vscode/
+.idea/
