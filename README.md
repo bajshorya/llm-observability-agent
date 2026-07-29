@@ -17,8 +17,8 @@ earns its cost.
 | Phase | Scope | State |
 |---|---|---|
 | **0** | Scaffold, schema, log generator, ingestion | ✅ Done |
-| 1 | Tier 1 statistical detectors (no LLM) | Next |
-| 2 | Tier 2 LLM classifier + cost logging | |
+| **1** | Rollup worker + Tier 1 statistical detectors (no LLM) | ✅ Done |
+| 2 | Tier 2 LLM classifier + cost logging | Next |
 | 3 | GitHub commit correlation agent | |
 | 4 | Root-cause + fix agent (human-gated) | |
 | 5 | Next.js dashboard with reasoning trace | |
@@ -65,6 +65,46 @@ time before any detector could say anything.
 | `latency-jump` | Tail latency degrades sharply with no change in error rate |
 | `new-error` | A never-before-seen signature appears — the null-price bug |
 
+---
+
+## Detection (Tier 1)
+
+Statistics only. No LLM, no API key, no cost.
+
+```bash
+pnpm detect                 # roll up, then run the detectors once
+pnpm detect --watch 30      # repeat every 30s
+pnpm detect --rollup-only   # just recompute aggregates
+pnpm test                   # 27 unit tests over the detectors and stats
+```
+
+A firing window looks like this:
+
+```
+Rollup: 18363 logs -> 480 buckets (06:28 to 08:28)
+Window 08:23 to 08:28 (baseline 60 min):
+  orders-api: ANOMALY created  6a185278
+    - error_rate_spike     211 errors in window; baseline 0.33/min ±0.6, z=69.62
+    - new_error_signature  "TypeError: Cannot read properties of null (reading <str>)" x210
+                       sample: TypeError: Cannot read properties of null (reading 'toFixed')
+```
+
+Three detectors, each with a **relative** threshold and an **absolute floor**:
+
+| Detector | Fires when | Floor stops |
+|---|---|---|
+| `error_rate_spike` | errors/min > `mean + 3σ` of baseline | One extra error on a quiet service |
+| `latency_jump` | window p95 ≥ 3x baseline p95 | 2ms → 8ms being called a 4x regression |
+| `new_error_signature` | signature absent from baseline, ≥3 occurrences | A single fluke |
+
+The relative test makes it adaptive; the floor stops it firing on changes that are
+statistically dramatic but practically meaningless.
+
+Verified behaviour: a healthy baseline produces **zero** anomalies, `error-spike`
+fires only the error-rate detector, `latency-jump` fires only the latency
+detector, and `new-error` fires both the signature and error-rate detectors —
+correctly, since that scenario genuinely creates both conditions.
+
 Generation is seeded (`--seed`), so a failing detector test reproduces exactly and
 the demo tells the same story every run.
 
@@ -76,9 +116,15 @@ the demo tells the same story every run.
 packages/
   shared/      Zod schemas + error-signature normalisation. The contract
                every other package imports.
-  backend/     Fastify ingestion API, Drizzle schema, SQLite client.
+  backend/     Fastify ingestion API, Drizzle schema, SQLite client,
+               and the Tier 1 detection pipeline (src/detection).
   generator/   Synthetic traffic with on-command anomaly injection.
 ```
+
+Inside `backend/src/detection`, the split that matters is **pure vs impure**:
+`detectors.ts` and `stats.ts` are pure functions with no database, clock, or I/O,
+which is what makes them provable with fixed inputs. `rollup.ts` and `engine.ts`
+own everything that touches the database.
 
 `@obs/shared` is consumed directly as TypeScript — no build step between packages.
 
