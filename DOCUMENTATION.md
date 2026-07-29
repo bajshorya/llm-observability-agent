@@ -129,7 +129,8 @@ Agent_1/
 ├── .gitignore
 ├── .env.example               Documented config template
 ├── README.md                  Quick start + design notes
-├── DOCUMENTATION.md           This file
+├── DOCUMENTATION.md           This file — Phase 0 reference
+├── DOCUMENTATION-PHASE-1.md   Phase 1 reference (Tier 1 detection)
 ├── observability-agent-architecture.md    Original plan
 ├── data/
 │   └── dev.db                 SQLite database (gitignored)
@@ -1288,279 +1289,34 @@ pnpm db:push
 
 ## 15. Phase 1 — the detection pipeline
 
-Tier 1 detection. Statistics only: no LLM, no API key, no cost. This is the
-layer that makes the whole two-tier argument honest — if it did not work on its
-own, "the LLM only fires on 5% of windows" would just be a way of hiding a weak
-detector behind a model.
+Tier 1 detection (rollup worker plus the three statistical detectors) has its own
+full reference, written to the same depth as this document:
 
-Five files, all under `packages/backend/src/detection/`.
+**→ [`DOCUMENTATION-PHASE-1.md`](./DOCUMENTATION-PHASE-1.md)**
 
-### 15.1 The pure / impure split
+In brief: six source files plus two test files under
+`packages/backend/src/detection/`, split into **pure** (`stats.ts`,
+`detectors.ts`, `config.ts` — no database, no clock, no I/O) and **impure**
+(`rollup.ts`, `engine.ts`, `cli.ts`). That split is what allows the detection
+logic to be proven with fixed inputs rather than spot-checked against a live
+database.
 
-The single most important structural decision in this phase:
+Three detectors, each pairing a relative threshold with an absolute floor:
 
-| File | Touches DB? | Role |
+| Detector | Fires when | Floor stops |
 |---|---|---|
-| `stats.ts` | No | mean, sample stddev, percentile, median |
-| `detectors.ts` | No | The three detectors — stats in, triggers out |
-| `config.ts` | No | Every threshold, in one place |
-| `rollup.ts` | Yes | Raw logs → per-minute aggregates |
-| `engine.ts` | Yes | Load stats, run detectors, persist anomalies |
-| `cli.ts` | Yes | `pnpm detect` |
+| `error_rate_spike` | errors/min > `mean + 3σ` of baseline | One extra error on a quiet service |
+| `latency_jump` | window p95 ≥ 3x baseline p95 (median) | 2ms → 8ms being called a 4x regression |
+| `new_error_signature` | signature absent from baseline, ≥3 occurrences | A single fluke |
 
-`detectors.ts` has no database, no clock, and no I/O. That is what allows the
-detection logic to be **proven** with fixed inputs and known expected outputs
-rather than spot-checked against a live database. Everything awkward to
-test — queries, time, persistence — is isolated in `engine.ts`, which contains no
-detection logic of its own.
+Verified: a healthy baseline produces **zero** anomalies; each injection scenario
+fires its own detector; 27 unit tests pass against the real config. Anomalies are
+written with `severity`, `summary` and `is_real_incident` left null — those belong
+to Tier 2.
 
-### 15.2 `config.ts` — every threshold in one place
-
-Sensitivity is a property of the system that people will question, so it lives in
-one file with the reasoning attached rather than scattered as magic numbers.
-
-| Setting | Default | Why |
-|---|---|---|
-| `baselineMinutes` | 60 | Long enough to absorb normal variance, short enough that a regression does not get absorbed into its own baseline |
-| `windowMinutes` | 5 | Smooths single-minute noise, still catches incidents fast |
-| `baselineGapMinutes` | 1 | Stops the window leaking into the baseline it is compared against |
-| `minBaselineMinutes` | 30 | Detection is skipped until enough history exists |
-| `errorRate.stdDevMultiplier` | 3 | ~99.7% of a normal distribution; deliberately conservative |
-| `errorRate.minErrorsPerMinute` | 2 | Absolute floor |
-| `latency.ratioThreshold` | 3 | Observed p95 must be 3x baseline |
-| `latency.minObservedMs` | 200 | Absolute floor |
-| `newSignature.minOccurrences` | 3 | One occurrence is as likely a fluke as a regression |
-| `anomalyMergeGapMinutes` | 10 | Window for extending an open anomaly instead of creating a new one |
-
-**The baseline gap deserves attention.** Without it, the window under evaluation
-would be part of the baseline it is compared against — so a slow-building
-incident would quietly raise its own bar and could ramp indefinitely without ever
-crossing the threshold.
-
-### 15.3 `stats.ts` — and two choices that matter
-
-**Sample standard deviation (n-1), not population.** The baseline is a *sample*
-of how the service behaves, not the complete population of every minute it will
-ever run. The population formula would understate the spread and make the
-detector fire too readily.
-
-**Median for the latency baseline, mean for the error baseline.** This is not
-arbitrary. If a latency spike is already sitting in the baseline window, the mean
-is dragged upward — making the detector *least* sensitive exactly when a service
-has recently been misbehaving. The median ignores those outliers. Verified by
-test: a baseline of 55 minutes at 60ms plus 5 minutes at 5000ms has a mean of
-~470ms (which would hide a real 300ms regression) and a median of 60ms (which
-catches it).
-
-**Percentiles interpolate** rather than picking the nearest rank. With only 20
-samples, nearest-rank p95 can land on just one of two observations, making the
-metric jump around from minute to minute for no real reason.
-
-### 15.4 `rollup.ts` — raw logs to per-minute aggregates
-
-Detection never touches the `logs` table for counts or latency. It reads rollups,
-which turns "what did the last hour look like?" from a scan over hundreds of
-thousands of rows into a read of sixty.
-
-Two guarantees:
-
-**Idempotent.** Every write is an upsert keyed on the unique index
-`(service, endpoint, bucket_start)`:
-
-```ts
-.onConflictDoUpdate({
-  target: [metricsRollup.service, metricsRollup.endpoint, metricsRollup.bucketStart],
-  set: { requestCount: sql`excluded.request_count`, /* ... */ },
-})
-```
-
-Re-running over the same range recomputes identical values instead of duplicating
-buckets, so a crashed run can simply be run again. That is also what allows the
-worker to resume by *recomputing* the most recent bucket rather than having to
-track exactly where it stopped.
-
-**Only closed minutes.** The current, still-filling minute is never written:
-
-```ts
-const to = options.to ?? new Date(floorToMinute(Date.now()));
-```
-
-A partial bucket looks like a traffic collapse to the detectors and would fire a
-false anomaly on every single run.
-
-**Service-level rows are computed, not derived.** Each log is accumulated twice —
-once into its endpoint's bucket, once into a service-wide bucket with
-`endpoint = ""`:
-
-```ts
-accumulate(buckets, row.service, endpoint,      bucketStart, row.level, latencyMs);
-accumulate(buckets, row.service, SERVICE_LEVEL, bucketStart, row.level, latencyMs);
-```
-
-This is necessary because **percentiles are not mergeable**. You cannot average
-four per-endpoint p95s into a service p95 — that is not what a percentile means.
-The service aggregate has to be computed from the same raw latencies.
-
-Bucket keys use a NUL separator (`service\0endpoint\0bucketStart`) so two
-different service/endpoint pairs can never collide into one bucket.
-
-### 15.5 `detectors.ts` — relative threshold plus absolute floor
-
-Every detector has both. The relative test makes it adaptive to the service; the
-floor stops it firing on changes that are statistically dramatic but practically
-meaningless.
-
-**Error-rate spike**
-
-```ts
-observedPerMinute = errorCount / windowMinutes
-threshold          = mean(baseline) + 3 * stdDev(baseline)
-fires when observedPerMinute >= 2/min AND observedPerMinute > threshold
-```
-
-The floor is load-bearing here in a way that is easy to miss. On a quiet service
-the baseline standard deviation approaches zero, which makes a *single* extra
-error an infinitely-many-sigma event. Without the floor, detection would be
-loudest on the services that are behaving best.
-
-That zero-variance case also produces an infinite z-score, and
-`JSON.stringify(Infinity)` is `null` — which would silently corrupt the stored
-trigger. So it is clamped:
-
-```ts
-const MAX_Z_SCORE = 999;
-if (baselineStdDev <= 0) return observed > baselineMean ? MAX_Z_SCORE : 0;
-```
-
-There is a test asserting the trigger survives a JSON round-trip unchanged.
-
-**Latency jump**
-
-```ts
-baselineP95 = median(per-minute p95s)     // median, per §15.3
-ratio       = window.p95Ms / baselineP95
-fires when window.p95Ms >= 200ms AND ratio >= 3
-```
-
-The 200ms floor exists because 2ms → 8ms is a 4x ratio and completely
-imperceptible to a user.
-
-**New error signature**
-
-```ts
-for each signature in the window:
-  skip if present in the baseline
-  skip if occurrences < 3
-report the most frequent survivor
-```
-
-This is the only detector that can catch a brand-new failure on its *first*
-occurrence, before it has had time to become a statistical spike. It depends
-entirely on the signature normalisation from §11.1 — without it, ordinary id
-variation would make almost every error look novel and the detector would be
-useless.
-
-`runDetectors` returns **all** triggers that fired, not the first. A single
-incident commonly sets off several, and each carries independent evidence worth
-keeping for the correlation agent later.
-
-### 15.6 `engine.ts` — loading, orchestration, persistence
-
-Everything the pure detectors deliberately do not do.
-
-**Window anchoring.** The window ends at the most recent *closed minute present
-in the rollups*, not at `Date.now()`:
-
-```ts
-const windowEndMs = latestBucket ? latestBucket.getTime() + MINUTE_MS : floorToMinute(now);
-```
-
-This keeps detection and the rollup worker from disagreeing about where "now" is.
-(It also has a known limitation — see §15.8.)
-
-**Insufficient-baseline guard.** Detection is skipped entirely for a service with
-less than `minBaselineMinutes` of history, and says so rather than silently
-returning nothing:
-
-```
-orders-api: skipped — only 12 min of baseline (need 30)
-```
-
-On a service with no history every signature is novel and every number is
-unusual, so running detectors early would produce a burst of meaningless
-anomalies the moment the system starts.
-
-**Dedupe by extension.** A sustained incident fires on every run. Rather than
-creating a fresh anomaly each time, an open anomaly for the same service whose
-window ended within `anomalyMergeGapMinutes` is extended:
-
-```ts
-windowEnd: windowEnd > existing.windowEnd ? windowEnd : existing.windowEnd,
-triggers:  mergeTriggers(existing.triggers, triggers),   // newest of each kind
-```
-
-Without this a ten-minute outage would produce a wall of near-identical
-anomalies — and, from Phase 2 onward, a duplicated LLM call for every one of
-them. The dedupe is a cost control as much as a UX one.
-
-**Tier 2 fields stay null.** The engine writes `severity`, `summary` and
-`is_real_incident` as `null` and `status` as `"open"`. An anomaly is a complete,
-valid record with zero LLM involvement; Tier 2 enriches it later.
-
-### 15.7 Verification
-
-**Unit tests** — 27 across `stats.test.ts` and `detectors.test.ts`, run with
-`pnpm test`. They execute against the **real** `config.ts` rather than a fixture,
-so changing a threshold in a way that breaks an assumption fails the suite
-instead of silently altering the system's sensitivity.
-
-Coverage includes each detector firing and not firing, every absolute floor,
-zero-variance and empty baselines, the JSON round-trip of a clamped z-score, and
-median-vs-mean robustness.
-
-**End to end** — each scenario against a freshly reset database:
-
-| Case | Result |
-|---|---|
-| Healthy baseline only | **clean, 0 anomalies** |
-| `inject error-spike` | `error_rate_spike` only — z=26.63 |
-| `inject latency-jump` | `latency_jump` only — p95 1232ms vs 163ms baseline (7.56x) |
-| `inject new-error` | `error_rate_spike` + `new_error_signature` (x210) |
-
-The first row is the most important: no false positives on healthy traffic.
-
-The last row firing **two** detectors is correct, not a bug. The `new-error`
-scenario raises the error rate to 30% *and* introduces a novel signature, so both
-conditions genuinely hold. `error-spike` and `latency-jump` each fire only their
-own detector, which is what confirms the three are actually independent.
-
-Re-running detection on unchanged data extends the existing anomaly rather than
-creating a second one, verified by the window growing from `08:28` to `08:29`
-while the row count stayed at 1.
-
-### 15.8 Known limitations
-
-Stated rather than hidden, because they shape Phase 2 onward.
-
-**Silence is not detected.** Because the window anchors to the latest bucket
-*containing data*, a service that stops logging entirely freezes detection
-instead of raising an alarm. A dead service is arguably the most severe incident
-there is, and Tier 1 currently cannot see it. A fourth detector (traffic drop /
-absence) is the natural fix.
-
-**A single spiking minute is diluted.** Window p95 is the mean of the per-minute
-p95s, so a one-minute latency spike is averaged across five minutes and may not
-cross the ratio threshold. This is an accepted trade-off — Tier 1's job is to be
-cheap and quiet — but it means brief spikes are Tier 2's problem, not Tier 1's.
-
-**Only the most frequent novel signature is reported.** When several appear at
-once the others are still present in the anomaly's log window, but they are not
-called out in the trigger.
-
-**Aggregation happens in memory.** The rollup worker reads rows and groups them
-in JavaScript. At the scale this project targets (tens of thousands of rows per
-run) that is comfortably fast, but at much higher volume the counts would need to
-move into SQL with only latencies streaming out.
+The Phase 1 document covers every file line by line, the statistics and why each
+choice was made, a worked example with real numbers from the verification run, a
+design-decisions table, and the known limitations.
 
 ---
 

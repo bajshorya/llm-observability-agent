@@ -8,7 +8,16 @@ The point is the *system*, not the model call: cheap statistics catch the obviou
 cases for free, and the LLM is only invoked where semantic understanding actually
 earns its cost.
 
-> Architecture and full build plan: [`observability-agent-architecture.md`](./observability-agent-architecture.md)
+**Documentation**
+
+| Document | Covers |
+|---|---|
+| [`observability-agent-architecture.md`](./observability-agent-architecture.md) | The original architecture and full build plan |
+| [`DOCUMENTATION.md`](./DOCUMENTATION.md) | Phase 0 — scaffold, schemas, storage, ingestion, generator |
+| [`DOCUMENTATION-PHASE-1.md`](./DOCUMENTATION-PHASE-1.md) | Phase 1 — rollup worker and the three Tier 1 detectors |
+
+Both reference documents go file by file: what the code does, how it works, and
+why it was written that way.
 
 ---
 
