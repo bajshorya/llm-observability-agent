@@ -1,5 +1,7 @@
 import { parseArgs } from "node:util";
 import type { AnomalyTrigger } from "@obs/shared";
+import { classifyAnomalies } from "../classification/classify";
+import { env } from "../env";
 import { detectionConfig } from "./config";
 import { runDetection, type ServiceDetectionResult } from "./engine";
 import { runRollup } from "./rollup";
@@ -21,6 +23,7 @@ Usage:
 Options:
   --rollup-only     Compute per-minute aggregates and stop
   --detect-only     Run detectors against existing rollups
+  --classify        Also run Tier 2 (LLM) over anything new — see \`pnpm classify\`
   --watch <sec>     Repeat every <sec> seconds (default 30 when flag is bare)
   -h, --help        Show this message
 
@@ -68,7 +71,41 @@ function reportService(result: ServiceDetectionResult): void {
   }
 }
 
-async function runOnce(rollupOnly: boolean, detectOnly: boolean): Promise<void> {
+/**
+ * Chain Tier 2 onto a detection run.
+ *
+ * Off by default. Tier 1 is free and can run every thirty seconds; Tier 2
+ * spends quota, so making it opt-in keeps the cheap loop cheap and keeps the
+ * cost of the expensive one an explicit choice.
+ */
+async function runClassification(): Promise<void> {
+  const result = await classifyAnomalies();
+
+  if (result.outcomes.length === 0) return;
+
+  console.log(`Tier 2 via ${result.provider} (${result.model}):`);
+  for (const outcome of result.outcomes) {
+    const short = outcome.anomalyId.slice(0, 8);
+    if (outcome.status === "failed") {
+      console.log(`  ${short}: FAILED — ${outcome.error}`);
+      continue;
+    }
+    const verdict = outcome.classification;
+    if (!verdict) continue;
+    console.log(
+      `  ${short}: ${verdict.severity.toUpperCase()} ` +
+        `(${verdict.isRealIncident ? "incident" : "dismissed"}) — ${verdict.summary}`,
+    );
+  }
+}
+
+interface RunOptions {
+  rollupOnly: boolean;
+  detectOnly: boolean;
+  classify: boolean;
+}
+
+async function runOnce({ rollupOnly, detectOnly, classify }: RunOptions): Promise<void> {
   if (!detectOnly) {
     const rollup = await runRollup();
     if (rollup.logsRead === 0) {
@@ -94,6 +131,8 @@ async function runOnce(rollupOnly: boolean, detectOnly: boolean): Promise<void> 
   }
 
   for (const service of detection.services) reportService(service);
+
+  if (classify) await runClassification();
 }
 
 async function main(): Promise<void> {
@@ -101,6 +140,7 @@ async function main(): Promise<void> {
     options: {
       "rollup-only": { type: "boolean" },
       "detect-only": { type: "boolean" },
+      classify: { type: "boolean" },
       watch: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
@@ -111,11 +151,18 @@ async function main(): Promise<void> {
     return;
   }
 
-  const rollupOnly = values["rollup-only"] ?? false;
-  const detectOnly = values["detect-only"] ?? false;
+  const options: RunOptions = {
+    rollupOnly: values["rollup-only"] ?? false,
+    detectOnly: values["detect-only"] ?? false,
+    classify: values.classify ?? false,
+  };
+
+  if (options.classify) {
+    console.log(`Tier 2 enabled — provider: ${env.LLM_PROVIDER}\n`);
+  }
 
   if (values.watch === undefined) {
-    await runOnce(rollupOnly, detectOnly);
+    await runOnce(options);
     return;
   }
 
@@ -132,7 +179,7 @@ async function main(): Promise<void> {
   });
 
   while (running) {
-    await runOnce(rollupOnly, detectOnly);
+    await runOnce(options);
     console.log("");
     await new Promise((resolve) => setTimeout(resolve, intervalSec * 1000));
   }
