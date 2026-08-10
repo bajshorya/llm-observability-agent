@@ -11,6 +11,7 @@
     "backend": "pnpm --filter @obs/backend dev",
     "generate": "pnpm --filter @obs/generator start",
     "detect": "pnpm --filter @obs/backend detect",
+    "classify": "pnpm --filter @obs/backend classify",
     "test": "pnpm -r test",
     "db:push": "pnpm --filter @obs/backend db:push",
     "db:studio": "pnpm --filter @obs/backend db:studio",
