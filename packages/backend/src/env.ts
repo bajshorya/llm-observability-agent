@@ -13,6 +13,26 @@ try {
   // No .env file yet. Defaults below cover local development.
 }
 
+/**
+ * An unset key in `.env` arrives as `""`, not as undefined. Treating the empty
+ * string as "not provided" is what makes `.env.example` copyable as-is: the
+ * commented-out placeholders stay empty until you actually have a key.
+ */
+const optionalSecret = z
+  .string()
+  .trim()
+  .optional()
+  .transform((value) => (value ? value : undefined));
+
+export const llmProviderNames = [
+  "gemini",
+  "nvidia",
+  "openrouter",
+  "ollama",
+  "stub",
+] as const;
+export type LlmProviderName = (typeof llmProviderNames)[number];
+
 const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
@@ -20,6 +40,18 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   /** `file:` prefix is optional and stripped by the db client. */
   DATABASE_URL: z.string().min(1).default("file:./data/dev.db"),
+
+  /**
+   * Which provider the agents call. Defaults to `stub` so the whole pipeline
+   * runs — and the tests pass — with no API key and no network access.
+   */
+  LLM_PROVIDER: z.enum(llmProviderNames).default("stub"),
+  /** Overrides the provider's default model. See src/llm/config.ts. */
+  LLM_MODEL: optionalSecret,
+  GEMINI_API_KEY: optionalSecret,
+  NVIDIA_API_KEY: optionalSecret,
+  OPENROUTER_API_KEY: optionalSecret,
+  OLLAMA_BASE_URL: z.string().default("http://localhost:11434"),
 });
 
 const parsed = envSchema.safeParse(process.env);
