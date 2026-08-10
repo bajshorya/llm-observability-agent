@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNotNull, lt, max } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, lt, max } from "drizzle-orm";
 import type { AnomalyTrigger } from "@obs/shared";
 import { db } from "../db/client";
 import { anomalies, logs, metricsRollup } from "../db/schema";
@@ -176,12 +176,23 @@ function mergeTriggers(
 }
 
 /**
+ * Statuses an ongoing window is allowed to fold into.
+ *
+ * `dismissed` is here because Tier 2 dismisses benign patterns — a deploy
+ * restart, a load test — and the traffic that produced them usually keeps
+ * going. Without this, every subsequent run would create a fresh anomaly for
+ * a pattern already judged benign, and each one would buy another LLM call to
+ * reach the same verdict.
+ */
+const MERGEABLE_STATUSES = ["open", "dismissed"] as const;
+
+/**
  * Persist a firing window.
  *
  * A sustained incident fires on every run, so rather than creating a fresh
- * anomaly each time, an open anomaly whose window ended recently is extended.
- * Without this a ten-minute outage would produce a wall of near-identical
- * anomalies — and later, a duplicated LLM call for each one.
+ * anomaly each time, a recent anomaly whose window ended within the merge gap
+ * is extended. Without this a ten-minute outage would produce a wall of
+ * near-identical anomalies — and later, a duplicated LLM call for each one.
  */
 async function persistAnomaly(
   service: string,
@@ -192,9 +203,10 @@ async function persistAnomaly(
 ): Promise<{ action: DetectionAction; anomalyId: string }> {
   const mergeCutoff = new Date(windowStart.getTime() - config.anomalyMergeGapMinutes * MINUTE_MS);
 
-  const [openAnomaly] = await db
+  const [recentAnomaly] = await db
     .select({
       id: anomalies.id,
+      status: anomalies.status,
       windowEnd: anomalies.windowEnd,
       triggers: anomalies.triggers,
     })
@@ -202,12 +214,26 @@ async function persistAnomaly(
     .where(
       and(
         eq(anomalies.service, service),
-        eq(anomalies.status, "open"),
+        inArray(anomalies.status, [...MERGEABLE_STATUSES]),
         gte(anomalies.windowEnd, mergeCutoff),
       ),
     )
     .orderBy(desc(anomalies.windowEnd))
     .limit(1);
+
+  /**
+   * Folding into a dismissed anomaly is only safe while nothing new has
+   * happened. A signal that was not part of what the classifier dismissed is
+   * evidence it has not seen, so that starts a fresh anomaly and earns its own
+   * verdict — otherwise a real incident beginning shortly after a benign one
+   * would inherit its dismissal and never be looked at.
+   */
+  const knownKinds = new Set(recentAnomaly?.triggers.map((trigger) => trigger.kind));
+  const openAnomaly =
+    recentAnomaly?.status === "dismissed" &&
+    triggers.some((trigger) => !knownKinds.has(trigger.kind))
+      ? undefined
+      : recentAnomaly;
 
   if (openAnomaly) {
     await db
