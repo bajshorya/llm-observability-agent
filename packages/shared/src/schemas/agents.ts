@@ -53,6 +53,14 @@ export const hypothesisSchema = z.object({
 export type Hypothesis = z.infer<typeof hypothesisSchema>;
 
 /**
+ * The three LLM-backed agents. Every call records which one asked, so cost can
+ * be attributed per stage rather than reported as one undifferentiated total.
+ */
+export const llmAgents = ["classifier", "correlator", "root_cause"] as const;
+export type LlmAgent = (typeof llmAgents)[number];
+export const llmAgentSchema = z.enum(llmAgents);
+
+/**
  * Per-call cost and latency, recorded for every LLM invocation.
  *
  * This is what lets us make the claim the whole two-tier design exists to
@@ -62,7 +70,7 @@ export type Hypothesis = z.infer<typeof hypothesisSchema>;
 export const llmCallStatsSchema = z.object({
   provider: z.string(),
   model: z.string(),
-  agent: z.enum(["classifier", "correlator", "root_cause"]),
+  agent: llmAgentSchema,
   inputTokens: z.number().int().nonnegative().nullable(),
   outputTokens: z.number().int().nonnegative().nullable(),
   latencyMs: z.number().nonnegative(),
