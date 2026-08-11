@@ -76,23 +76,70 @@ const BASELINE_ERRORS: readonly FailureKind[] = [
   },
 ];
 
-export const SCENARIO_NAMES = ["error-spike", "latency-jump", "new-error"] as const;
+export const SCENARIO_NAMES = [
+  "error-spike",
+  "latency-jump",
+  "new-error",
+  "deploy-restart",
+  "batch-job",
+  "rate-limit-storm",
+] as const;
 export type ScenarioName = (typeof SCENARIO_NAMES)[number];
 
 export interface Scenario {
   readonly description: string;
-  readonly profile: (base: TrafficProfile) => TrafficProfile;
+  /**
+   * True when a correct classifier should dismiss this window as benign.
+   *
+   * Every one of these still trips Tier 1 — that is the point. Statistics
+   * cannot separate a deploy restart from an outage, so the benign scenarios
+   * exist to test the only thing that can: reading the log text.
+   */
+  readonly benign: boolean;
+  /**
+   * `progress` is the position within the injection window, 0 at its start and
+   * approaching 1 at its end. It exists so a scenario can have phases — an
+   * incident that recovers looks nothing like one that does not, and "already
+   * recovering" is one of the strongest benign signals there is.
+   */
+  readonly profile: (base: TrafficProfile, progress: number) => TrafficProfile;
   /** Overrides the error pool when present — used to introduce a novel signature. */
   readonly error?: FailureKind;
+  /**
+   * Lines that say what is happening, emitted once per generated window.
+   *
+   * This is the load-bearing part of every benign scenario. A burst of
+   * connection-refused errors is an outage; the same burst next to "v1.4.2
+   * starting up" is a deploy. Without these lines the benign cases would be
+   * genuinely indistinguishable from incidents, and an eval built on them
+   * would be measuring an impossible task rather than a hard one.
+   */
+  readonly context?: (
+    windowStart: Date,
+    rng: Rng,
+    progress: number,
+  ) => readonly ContextLine[];
 }
+
+/** A scenario-specific narration line. Always benign-level; never an error. */
+export interface ContextLine {
+  message: string;
+  level: "info" | "warn";
+  offsetMs?: number;
+}
+
+/** Fraction of the injection window a deploy's restart burst occupies. */
+const RESTART_PHASE = 0.2;
 
 export const SCENARIOS: Record<ScenarioName, Scenario> = {
   "error-spike": {
     description: "Error rate jumps ~40x using errors already seen in the baseline",
+    benign: false,
     profile: (base) => ({ ...base, errorRate: 0.35 }),
   },
   "latency-jump": {
     description: "Tail latency degrades sharply with no change in error rate",
+    benign: false,
     profile: (base) => ({
       ...base,
       latencyMedianMs: base.latencyMedianMs * 8,
@@ -102,6 +149,7 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
   "new-error": {
     description:
       "A never-before-seen error signature appears — the null-price bug from commit a3f9c21",
+    benign: false,
     profile: (base) => ({ ...base, errorRate: 0.3 }),
     error: {
       // Matches the bug we inject into the target app, so correlation has
@@ -110,6 +158,114 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
       errorType: "TypeError",
       statusCode: 500,
     },
+  },
+
+  /**
+   * The canonical false positive. A rollout drops connections while the new
+   * instances come up, then recovers completely. Statistically this is an
+   * error-rate spike with a novel signature — indistinguishable from the
+   * null-price bug above. The difference is entirely in the words.
+   */
+  "deploy-restart": {
+    description:
+      "Instances restart during a rollout: a short connection-refused burst, then full recovery",
+    benign: true,
+    profile: (base, progress) =>
+      progress < RESTART_PHASE
+        ? { ...base, errorRate: 0.45, latencyMedianMs: base.latencyMedianMs * 2 }
+        : base,
+    error: {
+      message: () => "Connection refused: upstream orders-db not ready",
+      errorType: "ConnectionRefusedError",
+      statusCode: 503,
+    },
+    context: (_windowStart, _rng, progress) =>
+      progress < RESTART_PHASE
+        ? [
+            { level: "info", message: "orders-api v1.4.2 starting up (deploy 7c1e044)" },
+            {
+              level: "warn",
+              message: "Draining connections for rolling restart, 1 of 3 instances cycling",
+              offsetMs: 2_000,
+            },
+          ]
+        : [
+            {
+              level: "info",
+              message: "Rollout complete: 3 of 3 instances healthy, health checks passing",
+            },
+          ],
+  },
+
+  /**
+   * Latency degradation with no user-facing failure. The warnings it emits are
+   * a novel signature, so the new-signature detector fires — correctly, and
+   * still benignly. This is the case that shows a trigger firing is not the
+   * same as something being wrong.
+   */
+  "batch-job": {
+    description:
+      "Nightly reconciliation saturates the pool: latency climbs, no user-facing errors",
+    benign: true,
+    profile: (base) => ({
+      ...base,
+      latencyMedianMs: base.latencyMedianMs * 8,
+      latencyTailFactor: base.latencyTailFactor * 1.5,
+      // Only the batch's own skip warnings, which are 409s rather than errors.
+      errorRate: 0.06,
+    }),
+    error: {
+      message: (rng) => `Record ${rng.int(80_000, 89_999)} already processed, skipping`,
+      errorType: "DuplicateRecordError",
+      statusCode: 409,
+    },
+    context: (_windowStart, rng, progress) =>
+      progress < 0.15
+        ? [
+            {
+              level: "info",
+              message: `Nightly reconciliation batch ${rng.int(4000, 4999)} started: 50000 orders queued`,
+            },
+          ]
+        : [
+            {
+              level: "info",
+              message: "Reconciliation in progress, connection pool at 18 of 20",
+            },
+          ],
+  },
+
+  /**
+   * One abusive client, throttled correctly. 429s are warnings rather than
+   * errors, so the error-rate detector stays quiet; the queueing shows up as a
+   * latency jump. A protection mechanism working as designed is the subtlest
+   * benign case here, because something genuinely is being refused.
+   */
+  "rate-limit-storm": {
+    description:
+      "A single client floods the API: 429s and queueing latency, other clients unaffected",
+    benign: true,
+    profile: (base) => ({
+      ...base,
+      requestsPerMinute: base.requestsPerMinute * 4,
+      latencyMedianMs: base.latencyMedianMs * 6,
+      errorRate: 0.4,
+    }),
+    error: {
+      // One client id, unlike the baseline's random spread. The normalised
+      // signature is identical to the baseline's, so this does NOT read as a
+      // new signature — only as volume.
+      message: () => "Rate limit exceeded for client 4471",
+      errorType: "RateLimitError",
+      statusCode: 429,
+    },
+    context: () => [
+      {
+        level: "warn",
+        message:
+          "Client 4471 exceeded quota: 12000 requests in 60s, throttling that client only",
+      },
+    ],
   },
 };
 
@@ -144,6 +300,10 @@ const MINUTE_MS = 60_000;
 /**
  * Generate traffic for the window starting at `windowStart`.
  * Defaults to one minute; live mode uses shorter ticks.
+ *
+ * `progress` is the position of this window within the injection, 0..1. Only
+ * phased scenarios read it; everything else behaves identically at any value,
+ * which is why it defaults to 1 (steady state) for backfill and live traffic.
  */
 export function generateMinute(
   profile: TrafficProfile,
@@ -151,8 +311,9 @@ export function generateMinute(
   rng: Rng,
   scenario?: Scenario,
   windowMs: number = MINUTE_MS,
+  progress = 1,
 ): GeneratedEntry[] {
-  const effective = scenario ? scenario.profile(profile) : profile;
+  const effective = scenario ? scenario.profile(profile, progress) : profile;
   const jitter = 0.85 + rng.next() * 0.3;
   const requestCount = Math.max(
     1,
@@ -209,6 +370,22 @@ export function generateMinute(
         latencyMs,
         errorType: failure.errorType,
       },
+    });
+  }
+
+  /**
+   * Narration last, so it is never displaced by the request loop's sampling.
+   * These carry no endpoint or status: they describe the service, not a
+   * request, and the rollup counts them as the handful of extra entries they
+   * are.
+   */
+  for (const line of scenario?.context?.(windowStart, rng, progress) ?? []) {
+    entries.push({
+      timestamp: new Date(windowStart.getTime() + (line.offsetMs ?? 0)),
+      service: effective.service,
+      level: line.level,
+      message: line.message,
+      metadata: {},
     });
   }
 
