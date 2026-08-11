@@ -26,9 +26,17 @@ Commands:
   live        Emit healthy traffic continuously in real time.
   inject      Emit anomalous traffic ending now. This is the demo trigger.
 
+Scenarios (--scenario):
+${SCENARIO_NAMES.map(
+  (name) =>
+    `  ${name.padEnd(17)} ${SCENARIOS[name].benign ? "[benign]  " : "[incident]"} ${SCENARIOS[name].description}`,
+).join("\n")}
+
+  Benign scenarios trip the Tier 1 detectors on purpose. They are what
+  Tier 2 exists to dismiss, and what \`pnpm eval\` measures it on.
+
 Options:
   --minutes <n>     Minutes of traffic to generate       (backfill: 120, inject: 5)
-  --scenario <s>    ${SCENARIO_NAMES.join(" | ")}
   --service <name>  Service name                         (default: ${BASELINE.service})
   --rpm <n>         Requests per minute                  (default: ${BASELINE.requestsPerMinute})
   --seed <n>        PRNG seed for reproducible output     (default: 42)
@@ -122,14 +130,33 @@ function report(label: string, entries: GeneratedEntry[], result: IngestResult):
 /** Generate `minutes` of history ending now, all in one shot. */
 async function generateHistory(options: Options, label: string): Promise<void> {
   const rng = createRng(options.seed);
-  const now = Date.now();
-  const startMs = now - options.minutes * 60_000;
+  /**
+   * Ends at the last minute boundary rather than at `now`.
+   *
+   * Rollup buckets and detection windows are both minute-aligned; generated
+   * traffic was not, so every run straddled the boundaries differently and the
+   * first generated minute was partly clipped out of the window it was meant
+   * to land in. That silently cost us the first thing a scenario says — a
+   * deploy banner emitted at offset zero fell outside the window it explains.
+   * Aligning here makes an injection land on exactly the minutes it claims to.
+   */
+  const endMs = Math.floor(Date.now() / 60_000) * 60_000;
+  const startMs = endMs - options.minutes * 60_000;
   const scenario = options.scenario ? SCENARIOS[options.scenario] : undefined;
 
   const entries: GeneratedEntry[] = [];
   for (let minute = 0; minute < options.minutes; minute += 1) {
     const windowStart = new Date(startMs + minute * 60_000);
-    entries.push(...generateMinute(options.profile, windowStart, rng, scenario));
+    entries.push(
+      ...generateMinute(
+        options.profile,
+        windowStart,
+        rng,
+        scenario,
+        60_000,
+        minute / options.minutes,
+      ),
+    );
   }
 
   const result = await send(entries, options.url);
@@ -153,8 +180,14 @@ async function runInject(options: Options): Promise<void> {
       `inject requires --scenario. Expected one of: ${SCENARIO_NAMES.join(", ")}`,
     );
   }
+  const scenario = SCENARIOS[name];
   console.log(`Injecting "${name}" for ${options.minutes} minutes:`);
-  console.log(`  ${SCENARIOS[name].description}`);
+  console.log(`  ${scenario.description}`);
+  console.log(
+    scenario.benign
+      ? "  Tier 1 should fire. Tier 2 should dismiss it — that is the test."
+      : "  A real incident: Tier 1 should fire and Tier 2 should confirm it.",
+  );
   await generateHistory(options, "Injection complete");
 }
 
