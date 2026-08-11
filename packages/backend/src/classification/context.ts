@@ -1,5 +1,5 @@
 import type { AnomalyTrigger, LogLevel } from "@obs/shared";
-import { isErrorLevel } from "@obs/shared";
+import { isErrorLevel, normalizeErrorSignature } from "@obs/shared";
 
 /**
  * Building the classifier's evidence packet.
@@ -26,11 +26,15 @@ export const contextBudget = {
   /** Error/warn lines sampled across the window. */
   maxErrorLines: 15,
   /**
-   * Healthy lines, for contrast. Without any, a model reading only failures
-   * tends to assume total outage; a few successful requests in the same window
-   * are what distinguish "degraded" from "down".
+   * Healthy lines, which do two jobs. They provide contrast — a model reading
+   * only failures assumes total outage, and successful requests in the same
+   * window are what distinguish "degraded" from "down". They are also where
+   * service narration lives: deploy banners, job start and finish lines, the
+   * rare non-request entries that explain why a window looks the way it does.
+   * The budget is larger than contrast alone would need, because the sampler
+   * gives rare shapes priority and those lines are always rare.
    */
-  maxHealthyLines: 5,
+  maxHealthyLines: 8,
   /** Per-message cap. Stack traces are the reason this exists. */
   maxMessageChars: 240,
 } as const;
@@ -95,6 +99,71 @@ export function sampleEvenly<T>(items: readonly T[], limit: number): T[] {
     if (item !== undefined) sampled.push(item);
   }
   return sampled;
+}
+
+/**
+ * Sample for variety first, volume second.
+ *
+ * Uniform sampling assumes every line is equally informative, and in a log
+ * stream that is badly false: a line is informative roughly in proportion to
+ * how *rare* its shape is. Twenty copies of `GET /orders 200` say exactly what
+ * one copy says. A single `v1.4.2 starting up` explains the entire window.
+ *
+ * This was not a hypothetical. The first captured deploy-restart case dropped
+ * its startup banner — one line among two thousand routine ones — leaving a
+ * benign window that no reader, human or model, could have distinguished from
+ * an outage. Volume had crowded out the only line that mattered.
+ *
+ * So lines are grouped by normalised message shape (the same collapsing the
+ * error signatures use) and drawn round-robin across groups, evenly spaced
+ * within each. Rare shapes are guaranteed a slot; common ones still fill
+ * whatever is left, so the sample stays representative of what was happening.
+ */
+export function sampleDiverse<T>(
+  items: readonly T[],
+  limit: number,
+  shapeOf: (item: T) => string,
+): T[] {
+  if (limit <= 0) return [];
+  if (items.length <= limit) return [...items];
+
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const shape = shapeOf(item);
+    const group = groups.get(shape);
+    if (group) group.push(item);
+    else groups.set(shape, [item]);
+  }
+
+  // Rarest shapes first, so a one-off line is never the one that gets cut.
+  const ordered = [...groups.values()].sort((a, b) => a.length - b.length);
+
+  /**
+   * Hand out the budget a slot at a time, cycling through the shapes. Every
+   * shape gets its first slot before any shape gets a second, which is what
+   * guarantees the rare line survives; once the small groups are exhausted the
+   * remaining slots fall through to the common ones, so the budget is always
+   * spent in full.
+   */
+  const take = new Array<number>(ordered.length).fill(0);
+  let remaining = limit;
+
+  while (remaining > 0) {
+    let allocated = false;
+    for (let i = 0; i < ordered.length && remaining > 0; i += 1) {
+      const group = ordered[i];
+      if (group && take[i]! < group.length) {
+        take[i]! += 1;
+        remaining -= 1;
+        allocated = true;
+      }
+    }
+    // Every group is exhausted; the budget was larger than the input.
+    if (!allocated) break;
+  }
+
+  // Even spacing within each shape, so a shape's own progression still shows.
+  return ordered.flatMap((group, i) => sampleEvenly(group, take[i] ?? 0));
 }
 
 function describeTrigger(trigger: AnomalyTrigger): string {
@@ -187,11 +256,20 @@ export function renderClassificationContext(input: ClassificationInput): string 
     );
   }
 
+  /**
+   * Shape is the message with its variable detail stripped, so `Order 12778
+   * not found` and `Order 44012 not found` are one shape. Endpoint and status
+   * join the key because `GET /orders 200` and `POST /orders 201` are
+   * genuinely different events sharing a message template.
+   */
+  const shapeOf = (line: ContextLogLine): string =>
+    `${line.endpoint ?? ""} ${line.statusCode ?? ""} ${normalizeErrorSignature(line.message)}`;
+
   const errorLines = input.logLines.filter((line) => isErrorLevel(line.level));
   const healthyLines = input.logLines.filter((line) => !isErrorLevel(line.level));
   const sampled = [
-    ...sampleEvenly(errorLines, contextBudget.maxErrorLines),
-    ...sampleEvenly(healthyLines, contextBudget.maxHealthyLines),
+    ...sampleDiverse(errorLines, contextBudget.maxErrorLines, shapeOf),
+    ...sampleDiverse(healthyLines, contextBudget.maxHealthyLines, shapeOf),
   ].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
   if (sampled.length > 0) {

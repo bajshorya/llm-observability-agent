@@ -3,6 +3,7 @@ import type { AnomalyTrigger } from "@obs/shared";
 import {
   contextBudget,
   renderClassificationContext,
+  sampleDiverse,
   sampleEvenly,
   type ClassificationInput,
   type ContextLogLine,
@@ -68,6 +69,44 @@ describe("sampleEvenly", () => {
   });
 });
 
+describe("sampleDiverse", () => {
+  const shape = (value: string): string => value;
+
+  it("keeps a one-off line that uniform sampling would drown", () => {
+    // The deploy-restart failure: one banner among two thousand routine lines.
+    const lines = [...Array.from({ length: 2000 }, () => "GET /orders 200"), "v1.4.2 starting up"];
+
+    expect(sampleDiverse(lines, 5, shape)).toContain("v1.4.2 starting up");
+  });
+
+  it("still fills the budget from common shapes", () => {
+    const lines = [...Array.from({ length: 2000 }, () => "GET /orders 200"), "v1.4.2 starting up"];
+
+    expect(sampleDiverse(lines, 5, shape)).toHaveLength(5);
+  });
+
+  it("shares the budget across shapes rather than by volume", () => {
+    const lines = [
+      ...Array.from({ length: 100 }, () => "common"),
+      ...Array.from({ length: 10 }, () => "rare"),
+    ];
+
+    const sampled = sampleDiverse(lines, 6, shape);
+
+    expect(sampled.filter((line) => line === "rare").length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("returns everything when the input is under the limit", () => {
+    expect(sampleDiverse(["a", "b"], 5, shape)).toEqual(["a", "b"]);
+  });
+
+  it("never exceeds the limit however many shapes there are", () => {
+    const lines = Array.from({ length: 50 }, (_, i) => `shape ${i}`);
+
+    expect(sampleDiverse(lines, 6, shape)).toHaveLength(6);
+  });
+});
+
 describe("renderClassificationContext", () => {
   it("emits the marker lines the stub provider parses", () => {
     const rendered = renderClassificationContext(makeInput());
@@ -114,6 +153,27 @@ describe("renderClassificationContext", () => {
     );
     // The model is still told the true scale it was sampled from.
     expect(rendered).toContain("drawn from 5500");
+  });
+
+  it("keeps the one narration line that explains the window", () => {
+    // A deploy banner among hundreds of routine requests. Losing this line
+    // turns a benign restart into an indistinguishable outage.
+    const routine = makeLines(500, "info").map((line) => ({
+      ...line,
+      message: "GET /orders 200",
+    }));
+    const banner: ContextLogLine = {
+      timestamp: new Date(WINDOW_START.getTime() + 1000),
+      level: "info",
+      message: "orders-api v1.4.2 starting up (deploy 7c1e044)",
+    };
+
+    const rendered = renderClassificationContext({
+      ...makeInput(),
+      logLines: [...routine, banner],
+    });
+
+    expect(rendered).toContain("v1.4.2 starting up");
   });
 
   it("keeps a few healthy lines so degraded is distinguishable from down", () => {
