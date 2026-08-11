@@ -508,7 +508,13 @@ pnpm classify --provider gemini    # override LLM_PROVIDER for this run
 pnpm classify --preview <id>       # print the exact prompt, call nothing
 pnpm classify --stats              # funnel + per-provider usage
 pnpm detect --classify             # chain both tiers in one run
-pnpm test                          # 57 unit tests
+pnpm test                          # 77 unit tests
+
+pnpm eval                          # score the golden set against LLM_PROVIDER
+pnpm eval --provider stub          # the statistical baseline, for comparison
+pnpm eval --list                   # the golden set and its labels
+pnpm eval --show <name>            # a case's evidence packet
+pnpm eval --capture <name> --expect benign --severity low --note "..."
 ```
 
 `--preview` is the debugging tool that matters. When a classification looks
@@ -596,20 +602,21 @@ models are the intended default.
 | **Counts from raw logs** | Internally consistent evidence packet | Two extra indexed queries per anomaly |
 | **Dismissed anomalies are mergeable** | A benign ongoing pattern costs one LLM call, not one per run | A new incident within the merge gap with the *same* trigger kinds inherits the dismissal |
 | **`severity IS NULL` means unclassified** | Never classifies twice; safe to run on a loop | Re-classifying requires `--anomaly` explicitly |
-| **Sampling instead of full windows** | Bounded token cost regardless of traffic | The model sees ~20 lines of evidence, not the window |
+| **Sampling instead of full windows** | Bounded token cost regardless of traffic | The model sees ~23 lines of evidence, not the window |
+| **Sampling by shape, not uniformly** | A one-off deploy banner is never crowded out by routine traffic | The sample under-represents how dominant the common shapes are; the signature counts carry that instead |
+| **Golden cases captured, not written** | The eval measures the prompt the system actually sends | Re-capturing is needed whenever the context builder changes |
+| **Eval calls excluded from `llm_calls`** | The cost table stays an honest record of incident spend | Eval spend must be read from the eval's own output |
 
 ---
 
 ## 15. Known limitations
 
-**No eval harness yet.** The golden-set evaluation described in the architecture
-document — labelled windows, expected severities, accuracy tracked across prompt
-versions — is not built. The pieces it needs are in place: the context builder
-is pure and the temperature is near zero, so a fixed window produces a fixed
-prompt. This is the natural next increment.
+**The dismissal claim is currently unproven.** See §17: on the golden set, no
+model available for local testing dismisses a benign window. The harness that
+measures this exists; the result it reports is a failure.
 
-**Row-scan bias.** Above 2000 error rows in a window the sample skews toward its
-start (§8).
+**Row-scan bias.** Above 2000 rows of either kind in a window the sample skews
+toward its start (§8).
 
 **Single-service context.** The packet describes one service. Cross-service
 cascades are a stretch goal in the architecture document and nothing here
@@ -626,7 +633,156 @@ theoretical.
 
 ---
 
-## 16. What Phase 2 hands to Phase 3
+## 16. The eval harness
+
+### Why the golden set is half benign
+
+Every window this system had ever classified was a genuine incident. All three
+original generator scenarios are real bugs. So the central claim of Tier 2 —
+that it can tell a deploy restart from an outage — had never been tested once.
+The prompt argues for it at length; nothing verified it.
+
+Three benign scenarios now exist, and **every one of them trips Tier 1**. That
+is the requirement, not a side effect: a benign scenario the detectors ignore
+tests nothing, because it never reaches the classifier.
+
+| Scenario | Tier 1 fires | Why it is benign |
+|---|---|---|
+| `deploy-restart` | `error_rate_spike` + `new_error_signature` | Connection-refused burst confined to a rolling restart, recovered inside the window |
+| `batch-job` | `latency_jump` + `new_error_signature` | Scheduled reconciliation saturating the pool; the only errors are its own duplicate-skip warnings |
+| `rate-limit-storm` | `latency_jump` + `new_error_signature` | One client throttled correctly; 429s are the protection working |
+
+`deploy-restart` is the sharpest of the three: statistically it is
+indistinguishable from `new-error`, the null-price bug. Both fire the same two
+detectors with comparable magnitudes. Everything separating them is text.
+
+### Making the benign cases fair
+
+A benign scenario is only benign if the evidence says so, which meant the
+generator had to gain two capabilities, and the context builder had to stop
+throwing away the lines that mattered.
+
+**Phased scenarios.** `Scenario.profile` now receives a `progress` argument, 0
+at the start of the injection and approaching 1 at its end, so a scenario can
+have an arc. "Already recovering" is one of the strongest benign signals there
+is, and it cannot be expressed by a profile that is constant across the window.
+
+**Narration.** `Scenario.context` emits lines that say what is happening —
+`orders-api v1.4.2 starting up (deploy 7c1e044)`, `Rollout complete: 3 of 3
+instances healthy`, `Nightly reconciliation batch 4609 started`. Without these
+the benign windows would be genuinely indistinguishable from incidents, and an
+eval built on them would measure an impossible task rather than a hard one.
+
+### Two bugs the golden set found immediately
+
+Both were in code that already passed its tests. Neither would have been caught
+by anything except trying to capture a real benign case.
+
+**The sampler discarded the only line that mattered.** The healthy-line sample
+was drawn uniformly, on the assumption that routine traffic is interchangeable.
+It is — but the deploy banner is one line among two thousand, and uniform
+sampling dropped it, leaving a window no reader could have judged correctly.
+
+The fix generalises the observation: a line is informative roughly in proportion
+to how *rare its shape is*. Twenty copies of `GET /orders 200` say what one copy
+says. `sampleDiverse` groups lines by normalised message shape — reusing the
+same collapsing the error signatures already do — and hands out the budget a
+slot at a time, cycling rarest-first, so every shape gets its first slot before
+any shape gets a second. Rare lines are guaranteed a place; common ones still
+fill whatever is left.
+
+**The scan cap hid the second half of the window.** Healthy rows were capped at
+200 per anomaly, an order of magnitude below the error cap, on the same
+assumption. On a service handling 240 requests a minute that covered the first
+twenty-five seconds and silently discarded every announcement made after it —
+including `Rollout complete`, the line stating the incident was over. The caps
+are now equal at 2000.
+
+**A third, smaller one:** injections were not minute-aligned, while rollup
+buckets and detection windows are. The first generated minute was therefore
+partly clipped out of the window it was meant to land in, which is how a deploy
+banner emitted at offset zero ended up outside the window it explains.
+`generateHistory` now ends on a minute boundary.
+
+### What is scored
+
+| Measure | Rule |
+|---|---|
+| **Verdict** | `isRealIncident` matches the label. Reported separately for benign and incident cases. |
+| **Severity** | Within one band of the label. Exact match reported but not headlined. |
+| **Grounding** | Does `affectedArea` appear in the evidence? |
+
+The verdict split is the important design choice. A model that answers "critical
+incident" to everything scores 100% on the incident half, and a single blended
+accuracy number would hide that completely — which is not hypothetical, see
+below.
+
+Severity is scored within one band because the line between high and critical is
+a matter of taste while the line between low and critical is not. Demanding
+exact agreement would score agreement with one labeller's judgement.
+
+**Grounding** is a mechanical check for a specific observed failure. Asked to
+classify a window whose endpoints were `/orders`, `/orders/:id` and
+`/orders/:id/refund`, llama3.2 answered `"/orders/checkout path"`. Verdict and
+severity both right; the field naming *where* was fabricated. The prompt offers
+`"unknown"` for exactly this case, and the interesting question is whether a
+model takes that option or fills the space. If the answer names a path, the path
+has to appear in what the model was shown — no judgement, no second model
+grading the first one's homework.
+
+**Summary wording is deliberately not scored.** Grading prose needs a human or
+an LLM judge, and a metric that cannot be trusted is worse than no metric.
+
+Eval calls are not written to `llm_calls`. That table backs a claim about what
+running the system costs; filling it with calls that classified no anomaly would
+inflate the exact number it exists to substantiate.
+
+---
+
+## 17. What the eval found
+
+Run against the stub, which scores by counting which detectors fired — the
+statistical judgement, with no reading involved:
+
+```
+  dismissed benign windows   0/3  (0%)
+  confirmed real incidents   2/3  (67%)
+  severity within one band   2/6  (exact 1/6)
+```
+
+Then against llama3.2 (3.2B, local, via Ollama):
+
+```
+  dismissed benign windows   0/3  (0%)
+  confirmed real incidents   3/3  (100%)
+  severity within one band   3/6  (exact 2/6)
+  area grounded in evidence  5/6  (83%)
+  cost                       7701 in / 284 out, 0 repair(s), mean 7965ms
+```
+
+**The model dismissed nothing.** It answered `critical` and `isRealIncident:
+true` to all six cases, including a rolling restart that recovered inside the
+window with two log lines saying so. Its perfect incident score is an artefact
+of always answering the same thing — which is precisely what the split scorecard
+is built to expose, and what a single "83% accurate" headline would have hidden.
+
+It also reproduced the grounding failure the check was written for, on a
+different case than the one that motivated it.
+
+**The honest reading:** on the evidence available, Tier 2 currently adds nothing
+over Tier 1 on the judgement it exists to make. A 3B model is far below what the
+design assumes — Gemini 2.5 Flash is the intended default and is free — but that
+is a hypothesis, and until it is run the claim in §1 of this document is
+unproven. The harness now makes it a measurement rather than an argument.
+
+**What was deliberately not done:** tuning the prompt until the numbers improve.
+Six cases and a 3B model is nowhere near enough signal to justify prompt changes,
+and a prompt fitted to this set would score well on this set and mean nothing.
+The next step is a run against a capable model, not a rewrite.
+
+---
+
+## 18. What Phase 2 hands to Phase 3
 
 Rows in `anomalies` with `is_real_incident = 1`, a `severity`, a plain-English
 `summary`, an `affected_area` implicated in the text of that summary, and status

@@ -69,11 +69,19 @@ Backfill matters more than it looks. Detection compares a window against a
 *trailing baseline*, so without it you would have to sit and wait an hour in real
 time before any detector could say anything.
 
-| Scenario | What it simulates |
-|---|---|
-| `error-spike` | Error rate jumps ~40x using errors already present in the baseline |
-| `latency-jump` | Tail latency degrades sharply with no change in error rate |
-| `new-error` | A never-before-seen signature appears — the null-price bug |
+| Scenario | What it simulates | Correct verdict |
+|---|---|---|
+| `error-spike` | Error rate jumps ~40x using errors already present in the baseline | incident |
+| `latency-jump` | Tail latency degrades sharply with no change in error rate | incident |
+| `new-error` | A never-before-seen signature appears — the null-price bug | incident |
+| `deploy-restart` | Connection-refused burst during a rolling restart, then recovery | **dismiss** |
+| `batch-job` | Nightly reconciliation saturates the pool; no user-facing errors | **dismiss** |
+| `rate-limit-storm` | One client floods the API and is throttled correctly | **dismiss** |
+
+The bottom three all trip Tier 1 on purpose. `deploy-restart` is statistically
+indistinguishable from `new-error` — same two detectors, comparable magnitudes.
+Everything separating them is text, which is the entire case for Tier 2 and what
+`pnpm eval` measures it on.
 
 ---
 
@@ -85,7 +93,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 57 unit tests; 27 of them over the detectors and stats
+pnpm test                   # 77 unit tests; 27 of them over the detectors and stats
 ```
 
 A firing window looks like this:
@@ -152,10 +160,13 @@ output and the specific errors, twice at most — a model that cannot produce th
 shape twice will not produce it on the fifth try, and each retry costs tokens.
 
 **The context is budgeted, not dumped.** A five-minute window is tens of
-thousands of lines; the model gets ~20 of them, sampled evenly across the window
-so it sees the incident's shape rather than its first minute, plus per-signature
-counts and window aggregates. The builder is pure, so the same window always
-produces the same prompt.
+thousands of lines; the model gets ~23 of them, plus per-signature counts and
+window aggregates. They are sampled by *message shape*, not uniformly, because a
+line is informative in proportion to how rare its shape is: twenty copies of
+`GET /orders 200` say what one copy says, while a single `v1.4.2 starting up`
+explains the whole window. Uniform sampling dropped exactly that line, which is
+how the rule was found. The builder is pure, so the same window always produces
+the same prompt.
 
 **Every call is costed.** `llm_calls` records tokens, latency, repair attempts
 and success per invocation — failures included, since those spend quota too.
@@ -177,6 +188,53 @@ runs the full pipeline and the tests need no network.
 
 ---
 
+## Evals
+
+Six golden cases — three real incidents, three benign windows that trip Tier 1
+anyway. Each one is a prompt **captured from a real pipeline run**, not written
+by hand, so the eval measures what the system actually sends.
+
+```bash
+pnpm eval                     # score against LLM_PROVIDER
+pnpm eval --provider stub     # the statistical baseline, for comparison
+pnpm eval --list              # the golden set and its labels
+```
+
+Three things are scored: the verdict (reported separately for benign and
+incident cases), severity within one band, and **grounding** — whether
+`affectedArea` actually appears in the evidence, or was invented. That last
+check exists because a model returned `/orders/checkout` for a service with no
+such endpoint.
+
+### Current result — the claim is not yet proven
+
+```
+                             stub    llama3.2 (3.2B)
+dismissed benign windows     0/3     0/3
+confirmed real incidents     2/3     3/3
+severity within one band     2/6     3/6
+area grounded in evidence    6/6     5/6
+```
+
+The stub scores by counting which detectors fired — it *is* the statistical
+judgement. llama3.2 answered `critical` / real-incident to all six cases,
+including a rolling restart that recovered inside the window with two log lines
+saying so. Its perfect incident score is an artefact of always answering the
+same thing, which is exactly why the scorecard splits the two halves instead of
+reporting one blended number.
+
+So on the evidence available, Tier 2 currently adds nothing over Tier 1 on the
+judgement it exists to make. A 3B model is far below what the design assumes and
+Gemini 2.5 Flash is the intended default — but that is a hypothesis until it is
+run, and the prompt has deliberately **not** been tuned against six cases and a
+weak model, because a prompt fitted to this set would score well on this set and
+mean nothing.
+
+The harness turned the central claim from an argument into a measurement. Right
+now the measurement says no.
+
+---
+
 ## Layout
 
 ```
@@ -185,8 +243,8 @@ packages/
                every other package imports.
   backend/     Fastify ingestion API, Drizzle schema, SQLite client,
                the Tier 1 detection pipeline (src/detection), the LLM
-               provider layer (src/llm) and the Tier 2 classifier
-               (src/classification).
+               provider layer (src/llm), the Tier 2 classifier
+               (src/classification) and the golden-set evals (src/eval).
   generator/   Synthetic traffic with on-command anomaly injection.
 ```
 
@@ -257,7 +315,7 @@ claim "the statistical layer works on its own" honest and checkable.
 
 ```bash
 pnpm typecheck            # strict TS across all packages
-pnpm test                 # 57 unit tests, no network required
+pnpm test                 # 77 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
   WHERE error_signature IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;"
