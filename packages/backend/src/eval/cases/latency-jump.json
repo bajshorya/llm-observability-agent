@@ -1,0 +1,11 @@
+{
+  "name": "latency-jump",
+  "scenario": "latency-jump",
+  "capturedAt": "2026-08-11T17:56:54.149Z",
+  "expect": {
+    "isRealIncident": true,
+    "severity": "high",
+    "note": "p95 degraded ~8x with no errors at all — every request is slow and nothing in the text says why"
+  },
+  "context": "Service: orders-api\nWindow: 2026-08-11T17:51:00.000Z to 2026-08-11T17:56:00.000Z (5 min)\nTriggers fired: latency_jump\n\nWhat the statistical detectors found:\n- latency_jump: p95 1274ms against a baseline of 169ms (7.56x)\n\nWindow totals:\n  requests 2490 | errors 9 (0.4%)\n  latency p50 126ms | p95 1274ms | p99 2663ms\n\nError signatures (3):\n  9x  Upstream timeout contacting payments-service after <num>ms\n        example: Upstream timeout contacting payments-service after 2500ms\n  8x  Order <num> not found\n        example: Order 15379 not found\n  6x  Rate limit exceeded for client <num>\n        example: Rate limit exceeded for client 1532\n\nLog sample (17 lines, evenly spaced, drawn from 2490 in the window):\n  17:51:00 INFO /orders 201 — POST /orders 201\n  17:51:00 INFO /orders/:id 200 — GET /orders/:id 200\n  17:51:00 INFO /orders 200 — GET /orders 200\n  17:51:01 INFO /orders/:id/refund 201 — POST /orders/:id/refund 201\n  17:51:13 WARN /orders/:id 429 — Rate limit exceeded for client 5128\n  17:51:36 WARN /orders 404 — Order 59259 not found\n  17:51:46 WARN /orders/:id 404 — Order 15379 not found\n  17:52:12 WARN /orders 429 — Rate limit exceeded for client 1532\n  17:52:48 ERROR /orders 504 — Upstream timeout contacting payments-service after 3000ms\n  17:52:59 ERROR /orders/:id 504 — Upstream timeout contacting payments-service after 2500ms\n  17:53:08 ERROR /orders/:id 504 — Upstream timeout contacting payments-service after 3000ms\n  17:53:29 ERROR /orders 504 — Upstream timeout contacting payments-service after 3000ms\n  17:54:25 ERROR /orders/:id 504 — Upstream timeout contacting payments-service after 2500ms\n  17:54:38 ERROR /orders 504 — Upstream timeout contacting payments-service after 3000ms\n  17:54:45 ERROR /orders/:id 504 — Upstream timeout contacting payments-service after 2500ms\n  17:55:12 ERROR /orders 504 — Upstream timeout contacting payments-service after 3000ms\n  17:55:29 ERROR /orders 504 — Upstream timeout contacting payments-service after 5000ms"
+}
