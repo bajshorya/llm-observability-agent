@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import {
   classificationSchema,
   type Classification,
@@ -34,14 +34,23 @@ const SERVICE_LEVEL = "";
 
 /**
  * Upper bound on rows pulled per anomaly. The prompt only ever shows ~20 of
- * these; the rest exist so the sampler has a window to spread across. On a
- * window busier than this the scan takes the earliest rows, which biases the
- * sample toward the start of the incident — accepted, because the aggregate
- * counts and signature table carry the shape of it, and the raw lines are
- * illustrative rather than load-bearing.
+ * these; the rest exist so the sampler has a window to spread across.
+ *
+ * The caps are equal for a reason learned the hard way. Healthy rows were
+ * originally capped an order of magnitude lower, on the assumption that
+ * routine traffic is interchangeable and a handful is as good as a thousand.
+ * It is not: service narration — deploy banners, "rollout complete", batch job
+ * start and finish lines — is info-level, and those are the lines that explain
+ * a window. A 200-row cap on a service handling 240 requests a minute covered
+ * the first twenty-five seconds and silently discarded every announcement made
+ * after that, including the one saying the incident had ended.
+ *
+ * Above the cap the scan still takes the earliest rows, biasing the sample
+ * toward the start of the window. Accepted: the aggregate counts and signature
+ * table carry the shape, and the raw lines are illustrative.
  */
 const MAX_ERROR_ROWS_SCANNED = 2000;
-const MAX_HEALTHY_ROWS_SCANNED = 200;
+const MAX_HEALTHY_ROWS_SCANNED = 2000;
 
 export type ClassificationStatus = "classified" | "failed";
 
@@ -362,11 +371,47 @@ export async function classificationFunnel(): Promise<ClassificationFunnel> {
   };
 }
 
-/** Render the prompt for an anomaly without calling anything. */
-export async function previewPrompt(anomalyId: string): Promise<string | null> {
-  const [anomaly] = await loadPending({ anomalyId });
+export interface RenderedContext {
+  anomalyId: string;
+  service: string;
+  context: string;
+}
+
+/**
+ * Build the evidence packet for one anomaly, defaulting to the most recent.
+ *
+ * The default is what makes capturing a golden case a single command: inject a
+ * scenario, detect, capture — with no id to copy between steps.
+ */
+export async function renderContextForAnomaly(
+  anomalyId?: string,
+): Promise<RenderedContext | null> {
+  const columns = {
+    id: anomalies.id,
+    service: anomalies.service,
+    windowStart: anomalies.windowStart,
+    windowEnd: anomalies.windowEnd,
+    triggers: anomalies.triggers,
+  };
+
+  const [anomaly] = anomalyId
+    ? await db.select(columns).from(anomalies).where(eq(anomalies.id, anomalyId))
+    : await db.select(columns).from(anomalies).orderBy(desc(anomalies.detectedAt)).limit(1);
+
   if (!anomaly) return null;
 
   const input = await buildClassificationInput(anomaly);
-  return `${CLASSIFIER_SYSTEM_PROMPT}\n\n---\n\n${renderClassificationContext(input)}`;
+  return {
+    anomalyId: anomaly.id,
+    service: anomaly.service,
+    context: renderClassificationContext(input),
+  };
+}
+
+/** Render the full prompt for an anomaly without calling anything. */
+export async function previewPrompt(anomalyId: string): Promise<string | null> {
+  const rendered = await renderContextForAnomaly(anomalyId);
+  if (!rendered) return null;
+
+  return `${CLASSIFIER_SYSTEM_PROMPT}\n\n---\n\n${rendered.context}`;
 }
