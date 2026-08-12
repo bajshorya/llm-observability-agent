@@ -16,6 +16,7 @@ earns its cost.
 | [`DOCUMENTATION.md`](./DOCUMENTATION.md) | Phase 0 — scaffold, schemas, storage, ingestion, generator |
 | [`DOCUMENTATION-PHASE-1.md`](./DOCUMENTATION-PHASE-1.md) | Phase 1 — rollup worker and the three Tier 1 detectors |
 | [`DOCUMENTATION-PHASE-2.md`](./DOCUMENTATION-PHASE-2.md) | Phase 2 — provider layer, structured output, LLM classifier |
+| [`DOCUMENTATION-EVALS.md`](./DOCUMENTATION-EVALS.md) | Benign scenarios, evidence-sampling fixes, and the golden-set harness |
 
 Each reference document goes file by file: what the code does, how it works, and
 why it was written that way.
