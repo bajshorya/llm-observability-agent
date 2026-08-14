@@ -8,10 +8,17 @@ The point is the *system*, not the model call: cheap statistics catch the obviou
 cases for free, and the LLM is only invoked where semantic understanding actually
 earns its cost.
 
-**Documentation**
+**New here? Read [`START-HERE.md`](./START-HERE.md) — 5 minutes, and it makes
+everything below optional.**
+
+The documents in the table are *reference*: written to be searched when you have
+a specific question, not read front to back. There are ~30,000 words of them.
+`START-HERE.md` tells you which section answers which question.
 
 | Document | Covers |
 |---|---|
+| [`START-HERE.md`](./START-HERE.md) | **The 15-minute orientation. Start here.** |
+| [`CODEBASE.md`](./CODEBASE.md) | **The complete reference — architecture, design, every file, current state.** |
 | [`observability-agent-architecture.md`](./observability-agent-architecture.md) | The original architecture and full build plan |
 | [`DOCUMENTATION.md`](./DOCUMENTATION.md) | Phase 0 — scaffold, schemas, storage, ingestion, generator |
 | [`DOCUMENTATION-PHASE-1.md`](./DOCUMENTATION-PHASE-1.md) | Phase 1 — rollup worker and the three Tier 1 detectors |
@@ -19,7 +26,8 @@ earns its cost.
 | [`DOCUMENTATION-EVALS.md`](./DOCUMENTATION-EVALS.md) | Benign scenarios, evidence-sampling fixes, and the golden-set harness |
 
 Each reference document goes file by file: what the code does, how it works, and
-why it was written that way.
+why it was written that way. They are phase-ordered, so where two disagree, the
+later one wins — `START-HERE.md` lists the known cases.
 
 ---
 
