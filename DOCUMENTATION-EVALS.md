@@ -1,7 +1,14 @@
 # Evaluation Harness — Full Reference
 
 Phase 2 built a classifier and argued that it can tell a deploy restart from an
-outage. This work tests that argument, finds it unproven, and says so.
+outage. This work tests that argument.
+
+The short version: **it holds.** A capable model separates three benign windows
+from three real incidents that are statistically indistinguishable, scoring 6/6
+on every measure, while the statistical baseline scores 0/3 on the benign half.
+Getting there took two runs that said otherwise, and finding that two of the six
+labels were wrong — which is the more useful half of the story and is kept here
+in full.
 
 It covers three things: benign scenarios for the generator, two fixes to the
 evidence builder that the benign scenarios exposed, and the golden-set harness
@@ -897,56 +904,96 @@ ever passed.
 
 ---
 
-## 10. Where the measurement actually stands
+## 10. Where the measurement stands
 
-**Incomplete, and worth being precise about.**
+**The claim holds.** On `gemini-3.5-flash` the golden set scores a clean sweep,
+identical across two consecutive runs:
 
-The final configuration — fixed scenarios, endpoint breakdown, per-minute
-timeline — has exactly **one case measured**. The Gemini free tier allows 20
-requests a day for 2.5 Flash, and the full run plus the A/B experiments consumed
-them. Five of six cases returned HTTP 429 before being answered.
+```
+  dismissed benign windows   3/3  (100%)
+  confirmed real incidents   3/3  (100%)
+  severity within one band   6/6  (exact 6/6)
+  area grounded in evidence  6/6  (100%)
+  cost                       13199 in / 546 out, 2 repair(s), mean 22s
+```
 
-What is measured, and what is not:
+Set against the control, that is the whole argument of the project in one table:
 
-| Configuration | Coverage | Result |
-|---|---|---|
-| stub | 6/6 | 0/3 dismissals |
-| llama3.2 | 6/6 | 0/3 dismissals |
-| Gemini, original scenarios | 6/6 | 1/3 dismissals, 6/6 severity, 6/6 grounded |
-| Gemini, fixed scenarios + endpoints | 6/6 | 1/3 dismissals (different case) |
-| **Gemini, + per-minute timeline** | **1/6** | `batch-job` ✓ — the rest unmeasured |
+```
+                             stub    llama3.2   gemini-2.5-flash   gemini-3.5-flash
+dismissed benign windows     0/3     0/3        1/3                3/3
+confirmed real incidents     2/3     3/3        3/3                3/3
+severity within one band     2/6     3/6        6/6                6/6 (exact 6/6)
+area grounded in evidence    6/6     5/6        6/6                6/6
+```
 
-So the honest claim today is narrow: **Gemini clearly outperforms both the
-statistical baseline and a 3B model on severity calibration, grounding and
-schema compliance, and dismisses at least one benign window the statistics
-cannot.** Whether the final packet gets the remaining cases right is a run away,
-not a conclusion.
+The stub scores by counting which detectors fired — it **is** the statistical
+judgement, with no reading involved — and it dismisses nothing, because the three
+benign windows are statistically indistinguishable from the three incidents. That
+is not a weakness of the stub; it is the reason Tier 2 exists, and 0/3 is the
+number that makes the claim falsifiable in the first place.
 
-The eval reports this correctly rather than hiding it. Failed calls are counted
-separately from wrong answers — a design decision made before it mattered,
-precisely so quota exhaustion could never be confused with bad judgement.
+A capable model dismisses all three. The gap between those two rows is exactly
+the value the LLM tier adds, measured rather than asserted.
 
-**Operational note worth keeping:** 20 requests a day makes the eval a
-once-or-twice-daily instrument on the free tier, not something to run in a loop.
-It also retroactively justifies the `--limit 10` cap on `pnpm classify`: a
-backlog genuinely could drain a day's quota in a single run.
+### What the repairs prove
+
+Every run reports **2 repair attempts**. Twice per set, the model returns
+something that fails Zod validation and the repair loop feeds it back its own
+output plus the specific errors — and both times it recovers, because no case
+ever fails with "no valid answer".
+
+That is the loop earning its place. Without it those two cases would be errors
+rather than results, and the score would read 4/6 with two failures that had
+nothing to do with judgement.
+
+### The cost of being right
+
+`gemini-3.5-flash` is roughly five times slower than `gemini-2.5-flash` — about
+22 seconds a call against 5. For a stage that runs on anomalies rather than in a
+request path this is a good trade, and it is the reason the model is a
+configuration value rather than a constant.
+
+### What is still not measured
+
+- **One provider.** NVIDIA, OpenRouter and Ollama remain untested against the
+  final packet; only the stub and llama3.2 have historical numbers, both against
+  an older version of the evidence.
+- **Six cases.** Enough to catch a model that defaults to one answer, and now
+  enough to show a capable model separating the two halves. Not enough to rank
+  two competent models against each other.
+- **The easy benign windows.** All three announce themselves in text. A traffic
+  shift after a marketing email, or a dependency degrading inside its SLA, has no
+  narration to read — see [§12](#12-limitations).
 
 ### On the risk of tuning
 
-Three changes were made across these runs. Only one was a response to a wrong
-answer, and the distinction matters:
+Three changes were made across these runs, and the distinction between them is
+what keeps the result meaningful:
 
 - **The scenario fix** — legitimate. The data contradicted the label; the test
-  was wrong, independently of what any model said.
+  was wrong independently of what any model said.
 - **The endpoint breakdown** — legitimate. Evidence the system already collected
-  and had never surfaced, addressing a real gap.
-- **The per-minute timeline** — the borderline one. It was prompted by a wrong
-  answer, but the diagnosis was specific and mechanical (the packet had no time
-  axis at all), and the fix serves every case rather than the one that failed.
+  and had never surfaced.
+- **The per-minute timeline** — the borderline one. Prompted by a wrong answer,
+  but the diagnosis was mechanical (the packet had no time axis at all) and the
+  fix serves every case rather than the one that failed.
 
-What was *not* done, at any point: relabelling a case so the score improved, or
-editing the prompt to chase a number. On six cases either would produce a
-harness that measures its own tuning.
+What was never done: relabelling a case so the score improved, or editing the
+prompt to chase a number. The prompt is byte-for-byte what it was before the
+first Gemini run. Everything that changed was evidence or test data, and each
+change is defensible without reference to the score it produced.
+
+### An operational note
+
+The free tier allows 20 requests a day **per model**. A six-case run plus any
+experimentation exhausts one model's budget, which is what makes the eval a
+once-or-twice-daily instrument rather than something to run in a loop. It also
+retroactively justifies the `--limit 10` cap on `pnpm classify`: a backlog
+genuinely could drain a day's quota in a single run.
+
+Quota is bucketed per model, so `LLM_MODEL` is the way through a 429 when one
+model is exhausted — which is how these final numbers were obtained.
 
 ---
 

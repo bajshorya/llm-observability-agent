@@ -50,7 +50,18 @@ export type LlmConfig = typeof llmConfig;
  * is the intended fix when one of them 404s.
  */
 export const defaultModels: Record<LlmProviderName, string> = {
-  gemini: "gemini-2.5-flash",
+  /**
+   * Scores 6/6 on the golden set — every verdict, every severity exact,
+   * every area grounded — stably across repeated runs. `gemini-2.5-flash`
+   * was the previous default and manages 1/3 on the benign half, so this is
+   * a measured choice rather than a preference for the larger number.
+   *
+   * It is roughly five times slower per call (~22s against ~5s). For a stage
+   * that runs on anomalies rather than in a request path, that is a good
+   * trade; if it ever stops being one, `LLM_MODEL` changes it without a
+   * deploy.
+   */
+  gemini: "gemini-3.5-flash",
   nvidia: "meta/llama-3.3-70b-instruct",
   openrouter: "meta-llama/llama-3.3-70b-instruct:free",
   ollama: "llama3.1:8b",

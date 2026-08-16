@@ -242,8 +242,11 @@ Cheap statistics filter; the model reads. Everything else — the separate
 commands, the offline stub, the merge rule, the budgeted context, the eval
 harness — exists to keep that split honest and to prove it works.
 
-Whether it *does* work now has a partial measured answer: `EVALS` §8–10. Gemini
-dismisses the hardest benign case that the statistics cannot; the final evidence
-packet is only one-sixth measured because the free tier allows 20 requests a day.
-Along the way the eval found that two of the six labels were wrong — which is
-the most useful thing it has done so far.
+It does work, and there is a number for it: `EVALS` §10. On a capable model the
+golden set scores 6/6 — all three benign windows dismissed, all three incidents
+confirmed, every severity exact. The statistical baseline scores 0/3 on the
+benign half, and the gap between those two rows *is* the value the LLM tier adds.
+
+Getting there took being wrong twice: two of the six labels were mine to fix, and
+one addition to the evidence packet made a case worse before a second one fixed
+it. That sequence is the more interesting half of the story.

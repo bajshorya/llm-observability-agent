@@ -712,12 +712,12 @@ containing data, so a service that stops logging entirely freezes detection
 instead of raising an alarm. A dead service is arguably the most severe incident
 there is, and Tier 1 cannot see it.
 
-**The dismissal claim is only partly proven.** Gemini 2.5 Flash dismisses
-`deploy-restart` — the case built to be statistically indistinguishable from a
-real bug — and calibrates severity within one band on every case. But the final
-evidence packet has one of six cases measured against it: the free tier allows 20
-requests a day and the A/B experiments consumed them. See `DOCUMENTATION-EVALS.md`
-§10 for exactly what is and is not measured.
+**Model capability is load-bearing, and the floor is high.** On
+`gemini-3.5-flash` the golden set scores 6/6 on every measure, stably. On
+`gemini-2.5-flash` it dismisses 1 of 3 benign windows, and on a 3B local model 0
+of 3 — the same as the statistical baseline, meaning the tier adds nothing at
+that size. The design assumes a capable model and degrades to useless without
+one. See `DOCUMENTATION-EVALS.md` §10.
 
 **Rollup staleness.** The worker resumes from its last written bucket, so logs
 arriving for an already-aggregated minute leave that bucket stale. Detection
@@ -746,10 +746,11 @@ change to the evidence packet invalidates them and `scripts/capture-cases.sh` ha
 to be re-run. That is the deliberate cost of measuring the prompt the system
 actually sends.
 
-**Free-tier quota bounds the eval.** Gemini 2.5 Flash allows 20 requests a day,
-so a six-case run plus any experimentation exhausts it. The eval is a once- or
-twice-daily instrument, not something to run in a loop — which is also why
-`pnpm classify` caps a run at 10 anomalies.
+**Free-tier quota bounds the eval.** 20 requests a day *per model*, so a
+six-case run plus any experimentation exhausts one model's budget. The eval is a
+once- or twice-daily instrument, not something to run in a loop — which is also
+why `pnpm classify` caps a run at 10 anomalies. Quota is bucketed per model, so
+`LLM_MODEL` is the way through a 429 when one model is spent.
 
 **No cost in currency.** `llm_calls` records tokens, not dollars, because every
 provider in use is free and a cost column reading `0.00` would imply precision
