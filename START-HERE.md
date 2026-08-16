@@ -4,8 +4,11 @@ There are ~30,000 words of documentation in this repo for ~4,900 lines of code.
 **Do not read them in order.** They are reference material — written to be
 searched when you have a specific question, the way you use a man page.
 
-This file is the only one meant to be read front to back. Fifteen minutes here
-and you will understand the system; everything else is lookup.
+This file is the only one meant to be read front to back. Six minutes here and
+you will understand the shape of the system; everything else is lookup.
+
+**Want the full sequence?** Jump to [the reading order](#the-reading-order) —
+five steps, fifty-five minutes, and which document explains which concept.
 
 ---
 
@@ -139,11 +142,31 @@ want the extended reasoning behind a particular decision.
 
 ---
 
-## The fifteen-minute path
+## The reading order
 
-1. **README**, top through the Tier 2 section. Skip the rest. *(5 min)*
-2. **The five ideas above.** *(3 min)*
-3. **Run it** — this teaches more than any prose: *(7 min)*
+Eight documents, about two and a half hours if you read them all. You don't need
+to. **Fifty-five minutes in this order and you understand the system**; the rest
+becomes lookup.
+
+| # | Read | Time | After it you can |
+|---|---|---|---|
+| 1 | This file, to the end | 6 min | Say what the system does and why it has two tiers |
+| 2 | `README.md`, top through *Classification (Tier 2)* | 8 min | Run it, and know what each command does |
+| 3 | **Run it** — commands below | 15 min | See the actual prompt the system sends |
+| 4 | `CODEBASE.md` Parts I–II (§1–7) | 10 min | Trace a log line from HTTP to a verdict |
+| 5 | `CODEBASE.md` Part III (§8–14) | 14 min | Say what every file in the repo does |
+
+Stop at 5. Everything after that is reference you consult when you have a
+question, not reading you owe.
+
+| When you need it | Read |
+|---|---|
+| Why a threshold is 3σ; how the statistics work | `PHASE-1` §4–6, §13 |
+| The LLM layer in depth; adding a provider | `PHASE-2` §4–8 |
+| How evaluation works and what it found | `EVALS` — whole document |
+| Ingestion, schemas and the generator in detail | `DOCUMENTATION` §6–8 |
+
+### Step 3, concretely
 
 ```bash
 pnpm backend                                   # terminal 1
@@ -154,11 +177,37 @@ pnpm detect                                    # → ANOMALY, two triggers fired
 pnpm classify --preview <anomaly-id>           # ← the single most useful command
 ```
 
-That last command prints the exact prompt the system sends. Seeing the evidence
-packet — the triggers in words, the signature counts, the sampled log lines —
-explains the design better than §6 of any document.
+That last command prints the exact evidence packet sent to the model. Fifteen
+minutes of this teaches more than an hour of reading, because you see the
+abstraction and the concrete artefact at the same time.
 
-Then stop. Come back to the table above when you have a real question.
+### One trap
+
+**Don't start with `observability-agent-architecture.md`.** The name suggests it
+is the architecture; it is actually the *original proposal*, written before any
+code, describing five phases of which two and a half exist. Read it **last**, as
+history — "here is what I planned, here is what survived contact." It is genuinely
+interesting in that position and misleading in any other.
+
+### Where each concept is explained
+
+| Concept | Start | Then |
+|---|---|---|
+| The two-tier funnel | the five ideas above | `PHASE-2` §1 |
+| Ingestion and storage | `CODEBASE.md` §5 | `DOCUMENTATION` §7, §10 |
+| Detection statistics | `CODEBASE.md` §15 | `PHASE-1` §5–6, §13 |
+| **Agents** | `CODEBASE.md` §12 | `PHASE-2` §4–5 |
+| Structured output and the repair loop | `CODEBASE.md` §12 | `PHASE-2` §5 |
+| The evidence packet | `CODEBASE.md` §13 | `EVALS` §9 |
+| **Evals** | `CODEBASE.md` §14 | `EVALS` — whole document |
+| The data model | `CODEBASE.md` §4 | `DOCUMENTATION` §9 |
+
+**On "agent" specifically**, since the word is overloaded everywhere: here it
+means *a role that calls an LLM with its own prompt and its own output schema*.
+Three are declared in `packages/shared/src/schemas/agents.ts` — `classifier`
+(built), `correlator` (Phase 3) and `root_cause` (Phase 4). Separate prompts per
+role rather than one mega-prompt: cheaper, easier to evaluate, and each one's
+cost is attributable in the `llm_calls` table.
 
 ---
 
