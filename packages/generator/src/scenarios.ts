@@ -121,15 +121,37 @@ export interface Scenario {
   ) => readonly ContextLine[];
 }
 
-/** A scenario-specific narration line. Always benign-level; never an error. */
+/**
+ * A scenario-specific entry: either narration, or work the scenario itself is
+ * doing.
+ *
+ * The request fields exist because a benign window cannot be created by
+ * narrating a bad one. A background job that saturates the pool has to show up
+ * as *its own* slow requests on *its own* path — if instead you multiply every
+ * request's latency and attach a friendly log line, you have built an incident
+ * and labelled it benign, which is what the first version of these scenarios
+ * did.
+ */
 export interface ContextLine {
   message: string;
   level: "info" | "warn";
   offsetMs?: number;
+  /** Present when this line represents a real request rather than narration. */
+  endpoint?: string;
+  statusCode?: number;
+  latencyMs?: number;
 }
 
 /** Fraction of the injection window a deploy's restart burst occupies. */
 const RESTART_PHASE = 0.2;
+
+/**
+ * Batch-job volume per generated window, against a baseline of ~240 requests a
+ * minute. Enough that the job's own slow requests own the top of the
+ * distribution — which is what moves p95 while leaving p50 alone.
+ */
+const BATCH_OPS_PER_WINDOW = 45;
+const BATCH_SKIPS_PER_WINDOW = 12;
 
 export const SCENARIOS: Record<ScenarioName, Scenario> = {
   "error-spike": {
@@ -198,58 +220,90 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
   },
 
   /**
-   * Latency degradation with no user-facing failure. The warnings it emits are
-   * a novel signature, so the new-signature detector fires — correctly, and
-   * still benignly. This is the case that shows a trigger firing is not the
-   * same as something being wrong.
+   * A background job dragging the aggregate while users are fine.
+   *
+   * The service-wide p95 explodes and the latency detector fires — correctly.
+   * But p50 barely moves, because the slow requests are all the job's own, on
+   * its own path. That bimodal shape is the actual signature of a background
+   * workload polluting a shared metric, and it is very common in real systems.
+   *
+   * The earlier version of this scenario multiplied *every* request's latency
+   * by eight and called itself benign on the strength of a log line. That was
+   * a mislabelled incident: at a p95 of 1.4 seconds every user was suffering,
+   * whatever the cause. Contain the impact, don't narrate it away.
    */
   "batch-job": {
     description:
-      "Nightly reconciliation saturates the pool: latency climbs, no user-facing errors",
+      "Nightly reconciliation drags the aggregate p95 while user traffic stays healthy",
     benign: true,
-    profile: (base) => ({
-      ...base,
-      latencyMedianMs: base.latencyMedianMs * 8,
-      latencyTailFactor: base.latencyTailFactor * 1.5,
-      // Only the batch's own skip warnings, which are 409s rather than errors.
-      errorRate: 0.06,
-    }),
-    error: {
-      message: (rng) => `Record ${rng.int(80_000, 89_999)} already processed, skipping`,
-      errorType: "DuplicateRecordError",
-      statusCode: 409,
-    },
-    context: (_windowStart, rng, progress) =>
-      progress < 0.15
-        ? [
-            {
+    // User traffic is deliberately untouched — the job's own work is emitted below.
+    profile: (base) => base,
+    context: (_windowStart, rng, progress) => {
+      const lines: ContextLine[] = [
+        progress < 0.15
+          ? {
               level: "info",
               message: `Nightly reconciliation batch ${rng.int(4000, 4999)} started: 50000 orders queued`,
-            },
-          ]
-        : [
-            {
+            }
+          : {
               level: "info",
               message: "Reconciliation in progress, connection pool at 18 of 20",
             },
-          ],
+      ];
+
+      // The job's own chunks: slow, and the only thing moving the service p95.
+      for (let i = 0; i < BATCH_OPS_PER_WINDOW; i += 1) {
+        lines.push({
+          level: "info",
+          message: `Reconciled chunk ${rng.int(1, 500)} of batch`,
+          endpoint: "/internal/reconcile",
+          statusCode: 200,
+          latencyMs: rng.latency(3200, 2.5),
+          offsetMs: rng.int(0, 59_000),
+        });
+      }
+
+      // Its skip warnings — 409s, so they never reach the error-rate detector,
+      // but they are a novel signature and the new-signature detector fires.
+      for (let i = 0; i < BATCH_SKIPS_PER_WINDOW; i += 1) {
+        lines.push({
+          level: "warn",
+          message: `Record ${rng.int(80_000, 89_999)} already processed, skipping`,
+          endpoint: "/internal/reconcile",
+          statusCode: 409,
+          latencyMs: rng.latency(140, 2),
+          offsetMs: rng.int(0, 59_000),
+        });
+      }
+
+      return lines;
+    },
   },
 
   /**
-   * One abusive client, throttled correctly. 429s are warnings rather than
-   * errors, so the error-rate detector stays quiet; the queueing shows up as a
-   * latency jump. A protection mechanism working as designed is the subtlest
-   * benign case here, because something genuinely is being refused.
+   * One abusive client, throttled correctly.
+   *
+   * The subtlest case in the set, and after the fix the quietest: a rate
+   * limiter rejects immediately, so nothing slows down and no error level is
+   * involved — 429s are warnings. The only thing that fires is the
+   * new-signature detector, on the quota warning itself.
+   *
+   * That makes it a clean test of one question: a brand-new warning appeared,
+   * and it describes a protection working exactly as designed. Is that an
+   * incident? The first version answered this by slowing every request down
+   * six-fold, which made "other clients unaffected" a claim the data flatly
+   * contradicted.
    */
   "rate-limit-storm": {
     description:
-      "A single client floods the API: 429s and queueing latency, other clients unaffected",
+      "A single client floods the API and is throttled: 429s, and nothing else degrades",
     benign: true,
     profile: (base) => ({
       ...base,
+      // The flood is real volume. Latency is untouched, because rejecting a
+      // request is cheap — that is the whole point of a rate limiter.
       requestsPerMinute: base.requestsPerMinute * 4,
-      latencyMedianMs: base.latencyMedianMs * 6,
-      errorRate: 0.4,
+      errorRate: 0.45,
     }),
     error: {
       // One client id, unlike the baseline's random spread. The normalised
@@ -374,18 +428,28 @@ export function generateMinute(
   }
 
   /**
-   * Narration last, so it is never displaced by the request loop's sampling.
-   * These carry no endpoint or status: they describe the service, not a
-   * request, and the rollup counts them as the handful of extra entries they
-   * are.
+   * Scenario-specific entries.
+   *
+   * Pure narration carries no endpoint or status — it describes the service,
+   * not a request. Entries that *do* carry them represent work the scenario is
+   * performing, and are aggregated by the rollup exactly like any other
+   * request, which is how a background job shows up in the service p95 without
+   * touching what users experience.
    */
   for (const line of scenario?.context?.(windowStart, rng, progress) ?? []) {
+    // Live mode ticks are shorter than a minute; keep offsets inside the window.
+    const offsetMs = Math.min(line.offsetMs ?? 0, windowMs - 1);
+
     entries.push({
-      timestamp: new Date(windowStart.getTime() + (line.offsetMs ?? 0)),
+      timestamp: new Date(windowStart.getTime() + offsetMs),
       service: effective.service,
       level: line.level,
       message: line.message,
-      metadata: {},
+      metadata: {
+        ...(line.endpoint === undefined ? {} : { endpoint: line.endpoint }),
+        ...(line.statusCode === undefined ? {} : { statusCode: line.statusCode }),
+        ...(line.latencyMs === undefined ? {} : { latencyMs: line.latencyMs }),
+      },
     });
   }
 
