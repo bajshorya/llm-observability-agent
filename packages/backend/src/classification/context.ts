@@ -23,6 +23,14 @@ import { isErrorLevel, normalizeErrorSignature } from "@obs/shared";
 export const contextBudget = {
   /** Distinct error signatures listed, most frequent first. */
   maxSignatures: 8,
+  /** Endpoints listed, slowest first. Enough to show where latency is concentrated. */
+  maxEndpoints: 6,
+  /**
+   * Minutes of per-minute detail. A merged anomaly can span far longer than the
+   * detection window, and the most recent minutes are the ones that say whether
+   * it is still happening — so when truncating, keep the tail.
+   */
+  maxTimelineMinutes: 20,
   /** Error/warn lines sampled across the window. */
   maxErrorLines: 15,
   /**
@@ -65,12 +73,54 @@ export interface WindowMetrics {
   p99Ms: number;
 }
 
+/**
+ * Per-minute detail across the window.
+ *
+ * The dimension everything else in the packet lacks. Totals say *how much*, the
+ * endpoint breakdown says *where*, and neither says *when* — so a burst that
+ * lasted sixty seconds and stopped is indistinguishable from steady failure for
+ * five minutes. Those are different incidents, and one of them is usually not
+ * an incident at all.
+ *
+ * This was measured, not assumed: a deploy restart that recovered inside its
+ * window was classified as a high-severity incident because the evidence showed
+ * errors spread across every endpoint with no indication they had already
+ * stopped.
+ */
+export interface MinuteMetric {
+  bucketStart: Date;
+  requestCount: number;
+  errorCount: number;
+  p95Ms: number;
+}
+
+/**
+ * Per-endpoint breakdown.
+ *
+ * A service-wide p95 is an average of very different things. When one path is
+ * slow and the rest are fine, the aggregate says "everything is slow" and the
+ * breakdown says "one background job is slow" — and those are different
+ * incidents, or rather one incident and one non-incident. The rollup worker
+ * already writes these rows; not reading them was leaving the evidence that
+ * distinguishes the two cases on the floor.
+ */
+export interface EndpointMetric {
+  endpoint: string;
+  requestCount: number;
+  errorCount: number;
+  p95Ms: number;
+}
+
 export interface ClassificationInput {
   service: string;
   windowStart: Date;
   windowEnd: Date;
   triggers: readonly AnomalyTrigger[];
   metrics: WindowMetrics;
+  /** Chronological, one entry per minute of the window. */
+  timeline: readonly MinuteMetric[];
+  /** Slowest-first breakdown; empty when the service has only one path. */
+  endpoints: readonly EndpointMetric[];
   signatures: readonly ContextSignature[];
   logLines: readonly ContextLogLine[];
   /** Total lines the sample was drawn from, so the model knows the scale. */
@@ -234,6 +284,49 @@ export function renderClassificationContext(input: ClassificationInput): string 
       `  latency p50 ${metrics.p50Ms}ms | p95 ${metrics.p95Ms}ms | p99 ${metrics.p99Ms}ms`,
     ].join("\n"),
   );
+
+  if (input.timeline.length > 0) {
+    const shown = input.timeline.slice(-contextBudget.maxTimelineMinutes);
+    const truncated = input.timeline.length > shown.length;
+
+    sections.push(
+      [
+        truncated
+          ? `Per-minute detail (last ${shown.length} of ${input.timeline.length} minutes):`
+          : `Per-minute detail (${shown.length} minutes):`,
+        ...shown.map(
+          (minute) =>
+            `  ${clock(minute.bucketStart).slice(0, 5)}  ` +
+            `${String(minute.requestCount).padStart(5)} req  ` +
+            `${String(minute.errorCount).padStart(5)} err  ` +
+            `p95 ${String(minute.p95Ms).padStart(5)}ms`,
+        ),
+      ].join("\n"),
+    );
+  }
+
+  /**
+   * Only worth the tokens when there is more than one path — with a single
+   * endpoint this repeats the window totals in a wider format.
+   */
+  if (input.endpoints.length > 1) {
+    const shown = [...input.endpoints]
+      .sort((a, b) => b.p95Ms - a.p95Ms)
+      .slice(0, contextBudget.maxEndpoints);
+
+    sections.push(
+      [
+        "Latency by endpoint (slowest first):",
+        ...shown.map(
+          (endpoint) =>
+            `  ${truncate(endpoint.endpoint || "(none)", 40).padEnd(24)} ` +
+            `${String(endpoint.requestCount).padStart(6)} req  ` +
+            `${String(endpoint.errorCount).padStart(4)} err  ` +
+            `p95 ${endpoint.p95Ms}ms`,
+        ),
+      ].join("\n"),
+    );
+  }
 
   if (input.signatures.length > 0) {
     const shown = [...input.signatures]

@@ -177,6 +177,78 @@ async function loadMetrics(
   };
 }
 
+/**
+ * The window minute by minute.
+ *
+ * Same service-wide rollup rows `loadMetrics` reads, kept in sequence instead
+ * of collapsed into totals. Whether an incident is growing, steady or already
+ * over is the single most decision-relevant thing about it, and averaging the
+ * window destroys exactly that.
+ */
+async function loadTimeline(
+  service: string,
+  windowStart: Date,
+  windowEnd: Date,
+): Promise<ClassificationInput["timeline"]> {
+  return db
+    .select({
+      bucketStart: metricsRollup.bucketStart,
+      requestCount: metricsRollup.requestCount,
+      errorCount: metricsRollup.errorCount,
+      p95Ms: metricsRollup.p95Ms,
+    })
+    .from(metricsRollup)
+    .where(
+      and(
+        eq(metricsRollup.service, service),
+        eq(metricsRollup.endpoint, SERVICE_LEVEL),
+        gte(metricsRollup.bucketStart, windowStart),
+        lt(metricsRollup.bucketStart, windowEnd),
+      ),
+    )
+    .orderBy(asc(metricsRollup.bucketStart));
+}
+
+/**
+ * Per-endpoint latency, read from the rollup rows the worker already writes.
+ *
+ * This is what separates "the service is slow" from "one background path is
+ * slow and users are fine" — two windows with an identical service-wide p95
+ * and completely different verdicts.
+ */
+async function loadEndpointMetrics(
+  service: string,
+  windowStart: Date,
+  windowEnd: Date,
+): Promise<ClassificationInput["endpoints"]> {
+  const rows = await db
+    .select({
+      endpoint: metricsRollup.endpoint,
+      requestCount: sql<number>`sum(${metricsRollup.requestCount})`,
+      errorCount: sql<number>`sum(${metricsRollup.errorCount})`,
+      // Mean of per-minute p95s, matching how the service-wide figure is read.
+      p95Ms: sql<number>`avg(${metricsRollup.p95Ms})`,
+    })
+    .from(metricsRollup)
+    .where(
+      and(
+        eq(metricsRollup.service, service),
+        // Exclude the service-wide sentinel row; it is reported separately.
+        sql`${metricsRollup.endpoint} <> ${SERVICE_LEVEL}`,
+        gte(metricsRollup.bucketStart, windowStart),
+        lt(metricsRollup.bucketStart, windowEnd),
+      ),
+    )
+    .groupBy(metricsRollup.endpoint);
+
+  return rows.map((row) => ({
+    endpoint: row.endpoint,
+    requestCount: row.requestCount,
+    errorCount: row.errorCount,
+    p95Ms: Math.round(row.p95Ms),
+  }));
+}
+
 async function loadSignatures(
   service: string,
   windowStart: Date,
@@ -250,8 +322,10 @@ export async function buildClassificationInput(
 ): Promise<ClassificationInput> {
   const { service, windowStart, windowEnd } = anomaly;
 
-  const [metrics, signatures, errorLines, healthyLines] = await Promise.all([
+  const [metrics, timeline, endpoints, signatures, errorLines, healthyLines] = await Promise.all([
     loadMetrics(service, windowStart, windowEnd),
+    loadTimeline(service, windowStart, windowEnd),
+    loadEndpointMetrics(service, windowStart, windowEnd),
     loadSignatures(service, windowStart, windowEnd),
     loadLogLines(service, windowStart, windowEnd, ["error", "fatal", "warn"], MAX_ERROR_ROWS_SCANNED),
     loadLogLines(service, windowStart, windowEnd, ["info"], MAX_HEALTHY_ROWS_SCANNED),
@@ -263,6 +337,8 @@ export async function buildClassificationInput(
     windowEnd,
     triggers: anomaly.triggers,
     metrics,
+    timeline,
+    endpoints,
     signatures,
     logLines: [...errorLines, ...healthyLines],
     // One log entry per request, so the sample was drawn from exactly these.
