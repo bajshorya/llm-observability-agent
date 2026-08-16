@@ -37,6 +37,16 @@ function makeInput(overrides: Partial<ClassificationInput> = {}): Classification
     windowEnd: WINDOW_END,
     triggers: [NEW_SIGNATURE_TRIGGER],
     metrics: { requestCount: 1200, errorCount: 211, p50Ms: 45, p95Ms: 82, p99Ms: 120 },
+    timeline: Array.from({ length: 5 }, (_, i) => ({
+      bucketStart: new Date(WINDOW_START.getTime() + i * 60_000),
+      requestCount: 240,
+      errorCount: i === 0 ? 200 : 3,
+      p95Ms: 82,
+    })),
+    endpoints: [
+      { endpoint: "/orders", requestCount: 800, errorCount: 200, p95Ms: 95 },
+      { endpoint: "/orders/:id", requestCount: 400, errorCount: 11, p95Ms: 60 },
+    ],
     signatures: [
       {
         signature: "TypeError: Cannot read properties of null (reading <str>)",
@@ -215,6 +225,68 @@ describe("renderClassificationContext", () => {
 
     expect(rendered).toContain("…");
     expect(rendered).not.toContain("x".repeat(contextBudget.maxMessageChars + 1));
+  });
+
+  it("shows the window minute by minute, so a burst is distinguishable from steady failure", () => {
+    // The deploy-restart failure: without this, errors that stopped after one
+    // minute look identical to errors continuing for five.
+    const rendered = renderClassificationContext(makeInput());
+    const lines = rendered.split("\n");
+    const heading = lines.findIndex((line) => line.startsWith("Per-minute detail"));
+
+    expect(heading).toBeGreaterThan(-1);
+    expect(lines[heading + 1]).toContain("200 err");
+    expect(lines[heading + 2]).toContain("3 err");
+  });
+
+  it("keeps the most recent minutes when a merged window is long", () => {
+    // An extended anomaly can span hours; what matters is whether it is still
+    // happening, so truncation drops the oldest minutes rather than the newest.
+    const rendered = renderClassificationContext(
+      makeInput({
+        timeline: Array.from({ length: 40 }, (_, i) => ({
+          bucketStart: new Date(WINDOW_START.getTime() + i * 60_000),
+          requestCount: 240,
+          errorCount: i,
+          p95Ms: 80,
+        })),
+      }),
+    );
+
+    expect(rendered).toContain(`last ${contextBudget.maxTimelineMinutes} of 40 minutes`);
+    expect(rendered).toContain("39 err");
+    expect(rendered).not.toContain("    0 err");
+  });
+
+  it("shows where latency is concentrated, slowest path first", () => {
+    // The batch-job case: aggregate p95 is terrible, one background path owns
+    // all of it, and user endpoints are fine. Without this section those two
+    // situations are indistinguishable in the evidence.
+    const rendered = renderClassificationContext(
+      makeInput({
+        endpoints: [
+          { endpoint: "/orders", requestCount: 1200, errorCount: 2, p95Ms: 90 },
+          { endpoint: "/internal/reconcile", requestCount: 225, errorCount: 0, p95Ms: 4210 },
+        ],
+      }),
+    );
+
+    const lines = rendered.split("\n");
+    const heading = lines.findIndex((line) => line.startsWith("Latency by endpoint"));
+
+    expect(heading).toBeGreaterThan(-1);
+    expect(lines[heading + 1]).toContain("/internal/reconcile");
+    expect(lines[heading + 1]).toContain("4210ms");
+  });
+
+  it("omits the endpoint breakdown when there is only one path", () => {
+    const rendered = renderClassificationContext(
+      makeInput({
+        endpoints: [{ endpoint: "/orders", requestCount: 1200, errorCount: 2, p95Ms: 90 }],
+      }),
+    );
+
+    expect(rendered).not.toContain("Latency by endpoint");
   });
 
   it("omits the signature section entirely when there are none", () => {
