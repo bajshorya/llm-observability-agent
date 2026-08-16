@@ -37,15 +37,17 @@ whether they are.
 
 ```
 packages/generator/src/
-  scenarios.ts          + benign flag, progress phases, narration lines,
-                          three new scenarios
+  scenarios.ts          + benign flag, progress phases, narration and
+                          scenario-owned requests, three new scenarios
   index.ts              + progress passthrough, minute-aligned injections,
                           scenario table in --help
 
 packages/backend/src/classification/
-  context.ts            + sampleDiverse, larger healthy budget
-  context.test.ts       + 6 tests over shape sampling and narration survival
-  classify.ts           + renderContextForAnomaly, equalised scan caps
+  context.ts            + sampleDiverse, per-minute timeline, per-endpoint
+                          breakdown, larger healthy budget
+  context.test.ts       + 10 tests over sampling, narration, timeline, endpoints
+  classify.ts           + renderContextForAnomaly, loadTimeline,
+                          loadEndpointMetrics, equalised scan caps
 
 packages/backend/src/eval/
   cases.ts              Golden case schema, loading, saving
@@ -55,6 +57,10 @@ packages/backend/src/eval/
   cli.ts                pnpm eval
   score.test.ts         14 tests over grounding and scoring
   cases/*.json          Six captured cases
+
+scripts/
+  capture-cases.sh      Rebuilds the golden set from real runs. Needed
+                        whenever the evidence packet changes.
 ```
 
 ---
@@ -165,22 +171,33 @@ of them says `v1.4.2 starting up`.
 
 **`batch-job`** — a trigger firing correctly on something that does not matter.
 
+> The first version of this scenario multiplied *every* request's latency by
+> eight. That made it an incident wearing a benign label, and the Gemini run
+> caught it — see [§8](#8-the-gemini-run-and-what-it-exposed). What follows is
+> the corrected version.
+
 ```ts
 "batch-job": {
   benign: true,
-  profile: (base) => ({
-    ...base,
-    latencyMedianMs: base.latencyMedianMs * 8,
-    latencyTailFactor: base.latencyTailFactor * 1.5,
-    // Only the batch's own skip warnings, which are 409s rather than errors.
-    errorRate: 0.06,
-  }),
-  error: {
-    message: (rng) => `Record ${rng.int(80_000, 89_999)} already processed, skipping`,
-    errorType: "DuplicateRecordError",
-    statusCode: 409,
+  // User traffic is deliberately untouched — the job's own work is emitted below.
+  profile: (base) => base,
+  context: (_windowStart, rng, progress) => {
+    const lines: ContextLine[] = [ /* narration */ ];
+
+    // The job's own chunks: slow, and the only thing moving the service p95.
+    for (let i = 0; i < BATCH_OPS_PER_WINDOW; i += 1) {
+      lines.push({
+        level: "info",
+        message: `Reconciled chunk ${rng.int(1, 500)} of batch`,
+        endpoint: "/internal/reconcile",
+        statusCode: 200,
+        latencyMs: rng.latency(3200, 2.5),
+        offsetMs: rng.int(0, 59_000),
+      });
+    }
+    // ...plus its 409 skip warnings, on the same path.
+    return lines;
   },
-  ...
 }
 ```
 
@@ -200,14 +217,19 @@ signatures instead of one.
 
 **`rate-limit-storm`** — a protection mechanism working as designed.
 
+> Also corrected after the Gemini run: the first version slowed every request
+> six-fold, which made "other clients unaffected" a claim the data flatly
+> contradicted. See [§8](#8-the-gemini-run-and-what-it-exposed).
+
 ```ts
 "rate-limit-storm": {
   benign: true,
   profile: (base) => ({
     ...base,
+    // The flood is real volume. Latency is untouched, because rejecting a
+    // request is cheap — that is the whole point of a rate limiter.
     requestsPerMinute: base.requestsPerMinute * 4,
-    latencyMedianMs: base.latencyMedianMs * 6,
-    errorRate: 0.4,
+    errorRate: 0.45,
   }),
   error: {
     // One client id, unlike the baseline's random spread. The normalised
@@ -226,12 +248,17 @@ signatures instead of one.
 The fixed client id is the interesting detail. The baseline already emits
 `Rate limit exceeded for client N` with random ids, and normalisation collapses
 both to the same signature — so the flood is invisible to the new-signature
-detector and shows up only as volume and queueing latency. That is the correct
-behaviour and it is worth having a case that proves it.
+detector and registers only as volume.
 
-This scenario is the subtlest of the three, because something genuinely *is*
-being refused. Whether it should be dismissed is a real judgement rather than an
-obvious one, which is exactly the kind of case a golden set should contain.
+After the fix this is the quietest case in the set: nothing slows down, 429s are
+warnings rather than errors, and the **only** detector that fires is the
+new-signature one, on the quota warning itself. That makes it a clean test of a
+single question — a brand-new warning appeared and it describes a protection
+working exactly as designed; is that an incident?
+
+It is also the subtlest, because something genuinely *is* being refused. Whether
+it should be dismissed is a real judgement rather than an obvious one, which is
+exactly the kind of case a golden set should contain.
 
 ### 3.3 Narration, and why it is load-bearing
 
@@ -695,7 +722,7 @@ split reporting dismissals and confirmations separately.
 
 ---
 
-## 7. What it found
+## 7. What it found — the small-model runs
 
 ```
                              stub    llama3.2 (3.2B)
@@ -733,7 +760,197 @@ The next step is a run against a capable model, not a rewrite.
 
 ---
 
-## 8. Trade-offs
+## 8. The Gemini run, and what it exposed
+
+Running the set against Gemini 2.5 Flash — the model the design actually assumes
+— produced a much better result and, more usefully, showed that **two of the six
+cases were mislabelled**. The eval tested the labels as much as the model.
+
+```
+                             stub    llama3.2    gemini-2.5-flash
+dismissed benign windows     0/3     0/3         1/3
+confirmed real incidents     2/3     3/3         3/3
+severity within one band     2/6     3/6         6/6   (exact 3/6)
+area grounded in evidence    6/6     5/6         6/6
+repairs                       —      0           0
+```
+
+Severity calibration went from 2/6 to 6/6 within a band, grounding was perfect,
+and the schema held on every call with zero repairs. It also dismissed
+`deploy-restart` — the flagship case, statistically indistinguishable from the
+null-price bug — which no earlier configuration had managed.
+
+### The two failures were my fault
+
+`batch-job` and `rate-limit-storm` came back as real incidents at *medium*
+severity. Inspecting the evidence rather than the verdict showed why:
+
+| Case | p50 | p95 | vs baseline (45 / 169 ms) |
+|---|---|---|---|
+| `deploy-restart` | 51 ms | 186 ms | normal |
+| `batch-job` | 178 ms | 1369 ms | 4× / 8× |
+| `rate-limit-storm` | 242 ms | 988 ms | 5× / 6× |
+
+Both "benign" scenarios were built by multiplying **every request's** latency by
+six to eight — which is exactly how the `latency-jump` *incident* is built
+(median × 8). They were the same degradation with a friendlier log line attached.
+The narration claimed the impact was contained (*"throttling that client only"*)
+while the metrics showed every user waiting a second or more.
+
+Calling that a real incident is defensible. Arguably more defensible than the
+label. And the model was not saturating — it said medium, not critical, and got
+all three genuine incidents right at high.
+
+**The lesson, which generalises beyond this project:** you cannot make a window
+benign by narrating it. If the numbers still show users suffering, it is an
+incident regardless of the cause. A benign scenario has to *contain the impact*,
+not explain it away.
+
+### The fix: contain the impact
+
+`ContextLine` gained request fields (`endpoint`, `statusCode`, `latencyMs`), so a
+scenario can emit work of its own rather than only narration.
+
+**`batch-job`** now leaves user traffic completely untouched and emits 45 slow
+chunks a minute on `/internal/reconcile`. The service-wide p95 still explodes —
+the latency detector still fires — but p50 barely moves, because the slow
+requests are all the job's own. That bimodal shape is the real signature of a
+background workload polluting a shared metric.
+
+**`rate-limit-storm`** keeps the 4× volume and the 429s but leaves latency alone,
+because rejecting a request is cheap — that is the entire point of a rate
+limiter. After the fix it fires **only** the new-signature detector, on the quota
+warning itself, making it a clean test of one question: a brand-new warning
+appeared and it describes a protection working as designed; is that an incident?
+
+Captured evidence after the fix, which now matches the story:
+
+```
+batch-job          p50 51ms | p95 2925ms
+  /internal/reconcile    285 req    0 err   p95 6536ms
+  /orders               1177 req    6 err   p95  177ms
+  /orders/:id           1151 req    4 err   p95   80ms
+```
+
+---
+
+## 9. Two additions to the evidence packet, and an A/B
+
+### Per-endpoint latency
+
+The breakdown above did not exist before this work. The rollup worker had always
+written per-endpoint rows; the classifier only ever read the service-wide
+sentinel. Without it, "the service is slow" and "one background path is slow and
+users are fine" are indistinguishable — identical aggregate p95, opposite
+verdicts.
+
+Adding it produced a surprise. Re-running the set scored **1/3 again, but on a
+different case**: `rate-limit-storm` now passed and `deploy-restart` regressed.
+
+Three consecutive runs of `deploy-restart` gave the same wrong answer, so this
+was not temperature noise. A direct A/B — the same captured case with one section
+deleted — isolated the cause:
+
+| Case | With endpoint table | Without it |
+|---|---|---|
+| `deploy-restart` | incident / high ✗ (3 runs) | **dismissed / low ✓** (2 runs) |
+| `batch-job` | incident / medium ✗ | incident / high ✗ (2 runs) |
+| `rate-limit-storm` | **dismissed / low ✓** | incident / medium ✗ (2 runs) |
+
+The table traded one case for another. Net zero, stable in both directions, and
+**more evidence made one judgement worse** — which is worth stating plainly,
+because the intuitive assumption is that context can only help.
+
+### The diagnosis: no time axis
+
+The endpoint table aggregates the whole window. `deploy-restart`'s errors are
+confined to its first minute but spread across all three user paths, so the table
+rendered them as sustained multi-endpoint failure — contradicting the recovery
+that was visible only in the log lines.
+
+Totals say *how much*. The endpoint breakdown says *where*. Neither says *when* —
+and whether an incident is growing, steady, or already over is the most
+decision-relevant thing about it.
+
+### Per-minute detail
+
+So the packet gained a timeline, built from the same rollup rows, kept in
+sequence instead of collapsed:
+
+```
+Per-minute detail (5 minutes):
+  18:57    437 req    101 err  p95   270ms
+  18:58    505 req      3 err  p95   183ms
+  18:59    479 req      2 err  p95   177ms
+  19:00    413 req      1 err  p95   190ms
+  19:01    426 req      4 err  p95   170ms
+```
+
+That is the fact the model was missing. When truncating a long merged window it
+keeps the **tail**, because the recent minutes are the ones that say whether the
+incident is still happening.
+
+**First measured effect:** `batch-job` — a case that had failed in every previous
+configuration, against all three providers, with and without the endpoint table —
+came back `dismissed / medium`. Correct verdict, and the first time that case had
+ever passed.
+
+---
+
+## 10. Where the measurement actually stands
+
+**Incomplete, and worth being precise about.**
+
+The final configuration — fixed scenarios, endpoint breakdown, per-minute
+timeline — has exactly **one case measured**. The Gemini free tier allows 20
+requests a day for 2.5 Flash, and the full run plus the A/B experiments consumed
+them. Five of six cases returned HTTP 429 before being answered.
+
+What is measured, and what is not:
+
+| Configuration | Coverage | Result |
+|---|---|---|
+| stub | 6/6 | 0/3 dismissals |
+| llama3.2 | 6/6 | 0/3 dismissals |
+| Gemini, original scenarios | 6/6 | 1/3 dismissals, 6/6 severity, 6/6 grounded |
+| Gemini, fixed scenarios + endpoints | 6/6 | 1/3 dismissals (different case) |
+| **Gemini, + per-minute timeline** | **1/6** | `batch-job` ✓ — the rest unmeasured |
+
+So the honest claim today is narrow: **Gemini clearly outperforms both the
+statistical baseline and a 3B model on severity calibration, grounding and
+schema compliance, and dismisses at least one benign window the statistics
+cannot.** Whether the final packet gets the remaining cases right is a run away,
+not a conclusion.
+
+The eval reports this correctly rather than hiding it. Failed calls are counted
+separately from wrong answers — a design decision made before it mattered,
+precisely so quota exhaustion could never be confused with bad judgement.
+
+**Operational note worth keeping:** 20 requests a day makes the eval a
+once-or-twice-daily instrument on the free tier, not something to run in a loop.
+It also retroactively justifies the `--limit 10` cap on `pnpm classify`: a
+backlog genuinely could drain a day's quota in a single run.
+
+### On the risk of tuning
+
+Three changes were made across these runs. Only one was a response to a wrong
+answer, and the distinction matters:
+
+- **The scenario fix** — legitimate. The data contradicted the label; the test
+  was wrong, independently of what any model said.
+- **The endpoint breakdown** — legitimate. Evidence the system already collected
+  and had never surfaced, addressing a real gap.
+- **The per-minute timeline** — the borderline one. It was prompted by a wrong
+  answer, but the diagnosis was specific and mechanical (the packet had no time
+  axis at all), and the fix serves every case rather than the one that failed.
+
+What was *not* done, at any point: relabelling a case so the score improved, or
+editing the prompt to chase a number. On six cases either would produce a
+harness that measures its own tuning.
+
+---
+
+## 11. Trade-offs
 
 | Decision | Buys | Costs |
 |---|---|---|
@@ -748,7 +965,7 @@ The next step is a run against a capable model, not a rewrite.
 
 ---
 
-## 9. Limitations
+## 12. Limitations
 
 **Six cases is a small set.** Enough to catch a model that defaults to one
 answer; nowhere near enough to rank two competent models against each other, and
@@ -777,7 +994,7 @@ query rather than a scrollback search.
 
 ---
 
-## 10. Adding to the set
+## 13. Adding to the set
 
 A new benign scenario:
 

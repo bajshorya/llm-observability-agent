@@ -57,7 +57,7 @@ why the default provider is an offline stub.
 In every module, the logic that decides things has no database, clock, or I/O —
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `grounding.ts`. The
 code that touches the database is separate — `engine.ts`, `rollup.ts`,
-`classify.ts`, `calls.ts`. That split is why 77 tests run in 300ms with no
+`classify.ts`, `calls.ts`. That split is why 81 tests run in 300ms with no
 fixtures. **When you are hunting for logic, it is in a pure file.**
 
 **3. Everything crossing a boundary is validated with Zod.**
@@ -131,8 +131,8 @@ want the extended reasoning behind a particular decision.
 | What does the model actually see? | `PHASE-2` §6 — or just run `pnpm classify --preview <id>` |
 | How do I add another LLM provider? | `PHASE-2` §4 |
 | Why would an anomaly be dismissed? | `PHASE-2` §9 and `EVALS` §3 |
-| Is the classifier any good? | `EVALS` §7 |
-| What is known to be broken? | `PHASE-1` §16, `PHASE-2` §15, `EVALS` §9 |
+| Is the classifier any good? | `EVALS` §8–10 |
+| What is known to be broken? | `CODEBASE.md` §19 — consolidated |
 | What is next? | `PHASE-2` §18 |
 
 (`PHASE-1` = `DOCUMENTATION-PHASE-1.md`, and so on.)
@@ -174,10 +174,13 @@ Known instances:
 
 - `PHASE-1` §16 says anomalies are never dismissed and stay `open`. Phase 2
   changed that — see `PHASE-2` §9 and §10.
-- `PHASE-1` says 27 unit tests. There are now 77.
+- `PHASE-1` says 27 unit tests. There are now 81.
 - `PHASE-2` §6 describes the log sample as drawn evenly across the window. It is
   now drawn by message shape — see `EVALS` §4, which explains why the original
   approach silently dropped the one line that explained a benign window.
+- `PHASE-2` §6 and `EVALS` §3 describe an evidence packet with no per-minute
+  timeline and no per-endpoint breakdown. Both were added later; `CODEBASE.md`
+  §13 and `EVALS` §9 are current.
 
 This is the cost of chronological documentation, and it is worth knowing about
 before it misleads you.
@@ -190,6 +193,8 @@ Cheap statistics filter; the model reads. Everything else — the separate
 commands, the offline stub, the merge rule, the budgeted context, the eval
 harness — exists to keep that split honest and to prove it works.
 
-Whether it *does* work is currently an open question with a measured answer:
-`EVALS` §7. The answer today is no, and the reason is probably the model, not
-the design. That is the next thing to settle.
+Whether it *does* work now has a partial measured answer: `EVALS` §8–10. Gemini
+dismisses the hardest benign case that the statistics cannot; the final evidence
+packet is only one-sixth measured because the free tier allows 20 requests a day.
+Along the way the eval found that two of the six labels were wrong — which is
+the most useful thing it has done so far.

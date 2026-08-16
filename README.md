@@ -84,8 +84,8 @@ time before any detector could say anything.
 | `latency-jump` | Tail latency degrades sharply with no change in error rate | incident |
 | `new-error` | A never-before-seen signature appears — the null-price bug | incident |
 | `deploy-restart` | Connection-refused burst during a rolling restart, then recovery | **dismiss** |
-| `batch-job` | Nightly reconciliation saturates the pool; no user-facing errors | **dismiss** |
-| `rate-limit-storm` | One client floods the API and is throttled correctly | **dismiss** |
+| `batch-job` | Reconciliation drags aggregate p95; user endpoints stay healthy | **dismiss** |
+| `rate-limit-storm` | One client floods the API and is throttled; nothing else degrades | **dismiss** |
 
 The bottom three all trip Tier 1 on purpose. `deploy-restart` is statistically
 indistinguishable from `new-error` — same two detectors, comparable magnitudes.
@@ -102,7 +102,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 77 unit tests; 27 of them over the detectors and stats
+pnpm test                   # 81 unit tests; 27 of them over the detectors and stats
 ```
 
 A firing window looks like this:
@@ -169,7 +169,8 @@ output and the specific errors, twice at most — a model that cannot produce th
 shape twice will not produce it on the fifth try, and each retry costs tokens.
 
 **The context is budgeted, not dumped.** A five-minute window is tens of
-thousands of lines; the model gets ~23 of them, plus per-signature counts and
+thousands of lines; the model gets ~23 of them, plus per-minute totals, a
+per-endpoint latency breakdown, per-signature counts and
 window aggregates. They are sampled by *message shape*, not uniformly, because a
 line is informative in proportion to how rare its shape is: twenty copies of
 `GET /orders 200` say what one copy says, while a single `v1.4.2 starting up`
@@ -215,32 +216,40 @@ incident cases), severity within one band, and **grounding** — whether
 check exists because a model returned `/orders/checkout` for a service with no
 such endpoint.
 
-### Current result — the claim is not yet proven
+### Current result
 
 ```
-                             stub    llama3.2 (3.2B)
-dismissed benign windows     0/3     0/3
-confirmed real incidents     2/3     3/3
-severity within one band     2/6     3/6
-area grounded in evidence    6/6     5/6
+                             stub    llama3.2    gemini-2.5-flash
+dismissed benign windows     0/3     0/3         1/3
+confirmed real incidents     2/3     3/3         3/3
+severity within one band     2/6     3/6         6/6
+area grounded in evidence    6/6     5/6         6/6
+schema repairs needed         —      0           0
 ```
 
 The stub scores by counting which detectors fired — it *is* the statistical
-judgement. llama3.2 answered `critical` / real-incident to all six cases,
-including a rolling restart that recovered inside the window with two log lines
-saying so. Its perfect incident score is an artefact of always answering the
-same thing, which is exactly why the scorecard splits the two halves instead of
-reporting one blended number.
+judgement, and 0/3 on dismissals is the necessary control. llama3.2 answered
+`critical` / real-incident to all six cases, so its perfect incident score is an
+artefact of always saying the same thing, which is exactly why the scorecard
+splits the halves rather than reporting one blended number.
 
-So on the evidence available, Tier 2 currently adds nothing over Tier 1 on the
-judgement it exists to make. A 3B model is far below what the design assumes and
-Gemini 2.5 Flash is the intended default — but that is a hypothesis until it is
-run, and the prompt has deliberately **not** been tuned against six cases and a
-weak model, because a prompt fitted to this set would score well on this set and
-mean nothing.
+Gemini dismissed `deploy-restart` — the case built to be statistically
+indistinguishable from a real bug — and calibrated severity within one band on
+every case. That is the first evidence the two-tier design does what it claims.
 
-The harness turned the central claim from an argument into a measurement. Right
-now the measurement says no.
+**It also found two of the six labels were wrong.** The `batch-job` and
+`rate-limit-storm` scenarios multiplied *every* request's latency 6–8×, then
+claimed in narration that the impact was contained. A p95 of 1.4 s is a real
+incident whatever the cause, so the model was right and the labels weren't. Both
+scenarios now contain the impact instead of narrating it away —
+[`DOCUMENTATION-EVALS.md`](./DOCUMENTATION-EVALS.md) §8.
+
+The evidence packet gained a per-endpoint breakdown and a per-minute timeline as
+a result. The final configuration has **one of six cases measured** — the Gemini
+free tier allows 20 requests a day and the A/B experiments consumed them — so
+the honest position is that the claim is partly validated and the rest is a run
+away. The eval counts quota failures separately from wrong answers precisely so
+the two can never be confused.
 
 ---
 
@@ -324,7 +333,7 @@ claim "the statistical layer works on its own" honest and checkable.
 
 ```bash
 pnpm typecheck            # strict TS across all packages
-pnpm test                 # 77 unit tests, no network required
+pnpm test                 # 81 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
   WHERE error_signature IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;"

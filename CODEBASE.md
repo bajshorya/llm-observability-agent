@@ -9,7 +9,7 @@ as it stood at the end of a phase and some of what they say has been superseded.
 This one describes the system **as it is now**. Where they disagree, this file and
 the code win.
 
-**Size:** 44 TypeScript files — 4,879 lines of source, 932 lines of tests.
+**Size:** 44 TypeScript files — 5,112 lines of source, 1,010 lines of tests.
 
 ---
 
@@ -102,7 +102,7 @@ where semantic understanding earns its price.
   ┌──────────────────────────────────────────────────────────────┐
   │  TIER 2 — LLM classifier              ~1 call per incident    │
   │                                                               │
-  │  build evidence packet (budgeted, ~23 log lines)              │
+  │  build packet: totals, per-minute, per-endpoint, ~23 lines     │
   │    → provider.complete()                                      │
   │    → extract JSON → Zod parse → repair ×2 if invalid          │
   │                                                               │
@@ -138,7 +138,7 @@ checkable, not just claimed.
 In every module, the code that *decides* has no database, clock, or network:
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `json.ts`,
 `grounding.ts`, `score.ts`. The code that *persists* is separate: `engine.ts`,
-`rollup.ts`, `classify.ts`, `calls.ts`. This is why 77 tests run in ~300 ms with
+`rollup.ts`, `classify.ts`, `calls.ts`. This is why 81 tests run in ~300 ms with
 no fixtures. **When hunting for logic, it is in a pure file.**
 
 **3 · Everything crossing a boundary is validated with Zod.**
@@ -362,8 +362,8 @@ the single entry point. The `Scenario` interface carries `benign`, a
 | `latency-jump` | incident | median ×8, tail ×1.6, error rate unchanged |
 | `new-error` | incident | 30% errors, all a novel `TypeError` |
 | `deploy-restart` | **benign** | 45% errors for the first 20% of the window, then baseline; startup and rollout-complete narration |
-| `batch-job` | **benign** | median ×8, only 409 skip-warnings; job start narration |
-| `rate-limit-storm` | **benign** | 4× volume, median ×6, 429s from one client id |
+| `batch-job` | **benign** | user traffic untouched; 45 slow chunks/min on `/internal/reconcile` plus 409 skip-warnings |
+| `rate-limit-storm` | **benign** | 4× volume and 429s from one client id; latency untouched |
 
 **`src/index.ts`** (280 lines) — the CLI: `backfill`, `live`, `inject`.
 Sends in chunks of 500, tolerating 207. `generateHistory` ends on a **minute
@@ -523,8 +523,14 @@ Returns null tokens rather than estimates.
 
 ## 13. Backend — classification (Tier 2)
 
-**`context.ts`** (285 lines) — the evidence builder, pure.
-Budget: 8 signatures, 15 error lines, 8 healthy lines, 240 chars per message.
+**`context.ts`** (~360 lines) — the evidence builder, pure.
+Budget: 8 signatures, 6 endpoints, 20 timeline minutes, 15 error lines, 8 healthy
+lines, 240 chars per message. The packet carries four views of the window —
+totals (*how much*), a per-minute timeline (*when*), a per-endpoint breakdown
+(*where*), and sampled log lines (*what it looks like*). The timeline and
+endpoint sections were both added after measurement showed the packet could not
+distinguish a burst that stopped from steady failure, nor a slow background path
+from a slow service.
 `sampleEvenly` spreads across time; `sampleDiverse` groups by message shape and
 allocates round-robin rarest-first. Detailed in [§15](#15-the-algorithms).
 The `Service:` and `Triggers fired:` lines are load-bearing beyond readability —
@@ -574,6 +580,11 @@ a blended number hides that completely.
 `--show`, and `--capture`. Exits non-zero when any verdict is wrong.
 
 **`cases/*.json`** — six captured cases, three incidents and three benign.
+
+**`scripts/capture-cases.sh`** (repo root) — rebuilds the whole golden set from
+real pipeline runs against scratch databases under `.tmp/`. Required whenever the
+evidence packet changes, since a stored case is a fixed artefact of the renderer
+that produced it.
 
 ---
 
@@ -674,13 +685,13 @@ pnpm eval --show <name>             # a case's evidence packet
 
 ## 18. Testing strategy
 
-Five test files, 77 tests, ~300 ms, no network or database.
+Five test files, 81 tests, ~300 ms, no network or database.
 
 | File | Covers |
 |---|---|
 | `detection/stats.test.ts` | The four statistics primitives |
 | `detection/detectors.test.ts` | All three detectors, thresholds, floors |
-| `classification/context.test.ts` | Budget caps, shape sampling, narration survival, rendering |
+| `classification/context.test.ts` | Budget caps, shape sampling, narration survival, timeline, endpoint breakdown |
 | `llm/structured.test.ts` | JSON extraction, repair loop, cost accounting, stub |
 | `eval/score.test.ts` | Grounding, severity bands, split summary |
 
@@ -701,9 +712,12 @@ containing data, so a service that stops logging entirely freezes detection
 instead of raising an alarm. A dead service is arguably the most severe incident
 there is, and Tier 1 cannot see it.
 
-**The dismissal claim is unproven.** No model tested locally dismisses a benign
-window. The harness reports a failure; the likely explanation is model capability,
-but that is untested against a capable model.
+**The dismissal claim is only partly proven.** Gemini 2.5 Flash dismisses
+`deploy-restart` — the case built to be statistically indistinguishable from a
+real bug — and calibrates severity within one band on every case. But the final
+evidence packet has one of six cases measured against it: the free tier allows 20
+requests a day and the A/B experiments consumed them. See `DOCUMENTATION-EVALS.md`
+§10 for exactly what is and is not measured.
 
 **Rollup staleness.** The worker resumes from its last written bucket, so logs
 arriving for an already-aggregated minute leave that bucket stale. Detection
@@ -726,6 +740,16 @@ presenting the same trigger kinds folds into the existing anomaly.
 to one answer; not enough to rank two competent models, and the benign cases are
 the *easy* kind — each announces itself in text. Harder ones (a traffic shift, a
 dependency degrading within SLA) have no narration to read.
+
+**Golden cases are captured artefacts.** They store the rendered prompt, so any
+change to the evidence packet invalidates them and `scripts/capture-cases.sh` has
+to be re-run. That is the deliberate cost of measuring the prompt the system
+actually sends.
+
+**Free-tier quota bounds the eval.** Gemini 2.5 Flash allows 20 requests a day,
+so a six-case run plus any experimentation exhausts it. The eval is a once- or
+twice-daily instrument, not something to run in a loop — which is also why
+`pnpm classify` caps a run at 10 anomalies.
 
 **No cost in currency.** `llm_calls` records tokens, not dollars, because every
 provider in use is free and a cost column reading `0.00` would imply precision
