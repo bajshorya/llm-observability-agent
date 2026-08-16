@@ -216,40 +216,44 @@ incident cases), severity within one band, and **grounding** — whether
 check exists because a model returned `/orders/checkout` for a service with no
 such endpoint.
 
-### Current result
+### Current result — the claim holds
 
 ```
-                             stub    llama3.2    gemini-2.5-flash
-dismissed benign windows     0/3     0/3         1/3
-confirmed real incidents     2/3     3/3         3/3
-severity within one band     2/6     3/6         6/6
-area grounded in evidence    6/6     5/6         6/6
-schema repairs needed         —      0           0
+                             stub    llama3.2   gemini-2.5-flash   gemini-3.5-flash
+dismissed benign windows     0/3     0/3        1/3                3/3
+confirmed real incidents     2/3     3/3        3/3                3/3
+severity within one band     2/6     3/6        6/6                6/6 (exact 6/6)
+area grounded in evidence    6/6     5/6        6/6                6/6
 ```
 
-The stub scores by counting which detectors fired — it *is* the statistical
-judgement, and 0/3 on dismissals is the necessary control. llama3.2 answered
-`critical` / real-incident to all six cases, so its perfect incident score is an
-artefact of always saying the same thing, which is exactly why the scorecard
-splits the halves rather than reporting one blended number.
+The stub scores by counting which detectors fired — it **is** the statistical
+judgement — and it dismisses nothing, because the three benign windows are
+statistically indistinguishable from the three incidents. That 0/3 is not a
+weakness of the stub; it is the reason Tier 2 exists, and the number that makes
+the claim falsifiable.
 
-Gemini dismissed `deploy-restart` — the case built to be statistically
-indistinguishable from a real bug — and calibrated severity within one band on
-every case. That is the first evidence the two-tier design does what it claims.
+A capable model dismisses all three, gets every severity exactly right, and
+invents no locations. **The gap between those two rows is the value the LLM tier
+adds, measured rather than asserted.** The result is identical across repeated
+runs.
 
-**It also found two of the six labels were wrong.** The `batch-job` and
-`rate-limit-storm` scenarios multiplied *every* request's latency 6–8×, then
-claimed in narration that the impact was contained. A p95 of 1.4 s is a real
-incident whatever the cause, so the model was right and the labels weren't. Both
-scenarios now contain the impact instead of narrating it away —
-[`DOCUMENTATION-EVALS.md`](./DOCUMENTATION-EVALS.md) §8.
+Each run also reports 2 schema repairs: twice per set the model returns something
+that fails validation, and both times the repair loop recovers it. Without that
+loop those would be errors instead of results.
 
-The evidence packet gained a per-endpoint breakdown and a per-minute timeline as
-a result. The final configuration has **one of six cases measured** — the Gemini
-free tier allows 20 requests a day and the A/B experiments consumed them — so
-the honest position is that the claim is partly validated and the rest is a run
-away. The eval counts quota failures separately from wrong answers precisely so
-the two can never be confused.
+### Getting there took being wrong twice
+
+The eval's most useful output was not the score. It was discovering that **two of
+the six labels were mine to fix**: `batch-job` and `rate-limit-storm` multiplied
+*every* request's latency 6–8× while claiming in narration that the impact was
+contained. A p95 of 1.4 s is a real incident whatever the cause — the model was
+right and the labels weren't.
+
+Fixing them properly, then diagnosing why a per-endpoint breakdown made one case
+*worse*, is what produced the evidence packet's per-minute timeline. The whole
+sequence is in [`DOCUMENTATION-EVALS.md`](./DOCUMENTATION-EVALS.md) §8–10,
+including what was deliberately **not** done: no case was relabelled and the
+prompt is byte-for-byte unchanged since before the first Gemini run.
 
 ---
 
