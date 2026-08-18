@@ -1,3 +1,38 @@
+/**
+ * `pnpm generate` — the traffic generator's command-line interface.
+ *
+ * WHAT THIS FILE DOES
+ * Parses arguments, drives `scenarios.ts` to produce log entries, and POSTs them
+ * to the ingestion endpoint in bounded chunks. It owns the process; it owns no
+ * opinions about what the traffic looks like — that is entirely `scenarios.ts`.
+ *
+ * THREE COMMANDS
+ *   backfill   Generate N minutes of healthy history ending now, in one shot.
+ *              Detection compares a window against a TRAILING BASELINE, so
+ *              without this you would have to wait an hour in real time before
+ *              any detector could say anything. This is the command that makes
+ *              the project developable at all.
+ *   inject     Emit anomalous traffic ending now. The demo trigger. Prints
+ *              whether the chosen scenario should be confirmed or dismissed, so
+ *              the expected outcome is stated before you see the actual one.
+ *   live       Emit healthy traffic continuously on a 5-second tick.
+ *
+ * WHY GENERATED HISTORY ENDS ON A MINUTE BOUNDARY
+ * Rollup buckets and detection windows are both minute-aligned. Generated
+ * traffic was not, so every run straddled the boundaries differently and the
+ * first generated minute was partly clipped out of the window it was meant to
+ * land in. That silently cost the first thing a scenario says — a deploy banner
+ * emitted at offset zero fell outside the window it explains. Aligning here
+ * makes an injection land on exactly the minutes it claims to, and makes runs
+ * reproducible against bucket boundaries rather than against the wall clock.
+ *
+ * ERROR HANDLING WORTH KNOWING
+ * A connection failure is reported as "is the backend running?" rather than as
+ * a raw fetch error, because that is the actual cause every time. HTTP 207 is
+ * treated as success — it means the batch was partially accepted, and the
+ * rejected entries are reported per index.
+ */
+
 import { parseArgs } from "node:util";
 import type { IngestResult } from "@obs/shared";
 import { createRng } from "./random";
@@ -27,7 +62,7 @@ Commands:
   inject      Emit anomalous traffic ending now. This is the demo trigger.
 
 Scenarios (--scenario):
-${SCENARIO_NAMES.map(
+${SCENARIO_NAMES.map( 
   (name) =>
     `  ${name.padEnd(17)} ${SCENARIOS[name].benign ? "[benign]  " : "[incident]"} ${SCENARIOS[name].description}`,
 ).join("\n")}

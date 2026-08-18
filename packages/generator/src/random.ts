@@ -1,9 +1,32 @@
 /**
- * Seeded PRNG (mulberry32).
+ * Seeded pseudo-random number generation for the traffic generator.
  *
- * Deterministic generation matters more than it looks: it means a failing
- * detector test can be reproduced exactly, and that the demo produces the
- * same story every time you run it.
+ * WHAT THIS FILE DOES
+ * Exports `createRng(seed)`, returning a small deterministic random source with
+ * the handful of primitives the generator needs: `next` (uniform 0..1), `int`,
+ * `pick` from an array, `bool` at a given probability, and `latency`.
+ *
+ * WHY SEEDED RATHER THAN Math.random
+ * Determinism matters more here than it looks. It means a failing detector test
+ * can be reproduced exactly from its seed, and that the demo tells the same
+ * story every time it is run — which is the difference between a demo you can
+ * rehearse and one that surprises you in front of an audience.
+ *
+ * THE ALGORITHM
+ * mulberry32: a 32-bit state, a handful of shifts and multiplies, and a period
+ * long enough for anything this project does. Chosen because it is nine lines
+ * and needs no dependency — the quality bar here is "looks like plausible
+ * traffic", not cryptographic randomness.
+ *
+ * WHY LATENCY IS NOT UNIFORM
+ * `latency(medianMs, tailFactor)` draws from a LOG-NORMAL distribution via
+ * Box–Muller: a normal sample, exponentiated. Real request latency is not
+ * symmetric — it clusters just above a floor with a long right tail, and
+ * occasional very slow requests are normal rather than exceptional.
+ *
+ * This shape is what makes p95 and p99 meaningful metrics to compute, and what
+ * makes the latency detector worth writing. Uniform random latency would give
+ * p50 ≈ p95 and the detector would have nothing to detect.
  */
 export interface Rng {
   next(): number;

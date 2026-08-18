@@ -1,10 +1,44 @@
 /**
- * Tier 1 detection thresholds.
+ * Tier 1 detection thresholds — every number that decides what counts as an
+ * anomaly.
  *
- * Every tunable lives here rather than scattered through the detectors, so the
- * sensitivity of the system can be reasoned about — and later justified — in
- * one place. Each value carries the reasoning for its default, because
- * "why is k = 3?" is the first question anyone reviewing this will ask.
+ * WHAT THIS FILE DOES
+ * Exports one frozen config object. Nothing else in the detection pipeline
+ * contains a magic number; the detectors, the engine and the CLI all read from
+ * here.
+ *
+ * WHY THEY ARE ALL IN ONE PLACE
+ * The sensitivity of the whole system is the sum of these ten values. Scattered
+ * through the detectors they would be impossible to reason about together, and
+ * impossible to justify in review. Every value below carries the reasoning for
+ * its default, because "why is k = 3?" is the first question anyone asks.
+ *
+ * THE SHAPE OF A DETECTION RUN, IN THESE TERMS
+ *
+ *     |<--------- baselineMinutes (60) --------->|  gap  |<- window (5) ->|
+ *     |............ what "normal" means .........|  (1)  |  under test    |
+ *                                                          ^
+ *                                            fires → create or extend anomaly
+ *
+ * THE PATTERN EVERY DETECTOR FOLLOWS: RATIO **AND** FLOOR
+ * Each detector pairs a relative threshold with an absolute minimum:
+ *
+ *   errorRate    mean + 3σ   AND at least 2 errors/min
+ *   latency      3× baseline AND at least 200 ms observed
+ *   signature    unseen      AND at least 3 occurrences
+ *
+ * The ratio is what makes detection adaptive to each service's normal. The
+ * floor is a correction for statistics genuinely misbehaving at small numbers:
+ * on a quiet service the baseline standard deviation approaches zero, which
+ * makes a single extra error a >3σ event, and a latency move from 2 ms to 8 ms
+ * is a 4× regression no user could perceive. The floors are not fudge factors —
+ * they are where the statistical model stops applying.
+ *
+ * TUNING
+ * Raise `stdDevMultiplier` or the floors for fewer false positives; lower them
+ * to catch more. Run `pnpm test` afterwards — several tests assert against this
+ * real object rather than a fixture, so a change that contradicts a documented
+ * assumption fails loudly instead of silently altering sensitivity.
  */
 export const detectionConfig = {
   /**

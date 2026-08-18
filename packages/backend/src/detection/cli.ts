@@ -1,3 +1,38 @@
+/**
+ * `pnpm detect` — the Tier 1 operator interface.
+ *
+ * WHAT THIS FILE DOES
+ * Runs the rollup worker, then the detection engine, and prints what happened
+ * in a form a human can read at a glance. It is presentation only: every
+ * decision belongs to `rollup.ts` and `engine.ts`.
+ *
+ * WHY A COMMAND AND NOT A DAEMON
+ * Detection is idempotent and cheap, so running it on an interval from outside —
+ * cron, a shell loop, or `--watch` — keeps the moving parts obvious while
+ * developing. A long-lived scheduler would add failure modes (drift, missed
+ * ticks, restarts) for no benefit at this stage.
+ *
+ * OPTIONS
+ *   --rollup-only   compute aggregates and stop
+ *   --detect-only   run detectors against existing rollups
+ *   --classify      also run Tier 2 over anything new
+ *   --watch <sec>   repeat, default 30s when the flag is bare
+ *
+ * WHY `--classify` IS OPT-IN
+ * This is the whole two-tier design expressed as a flag. Tier 1 is free and can
+ * run every thirty seconds; Tier 2 spends quota and should not. Making the
+ * expensive stage an explicit choice keeps the cheap loop cheap — and keeps the
+ * claim "the statistical layer works on its own" true and checkable rather than
+ * merely asserted.
+ *
+ * OUTPUT
+ * A firing window prints each trigger with the evidence that justified it —
+ * observed counts against baseline mean and σ, the z-score, the ratio, the
+ * novel signature with a raw sample message. The goal is that the alert is
+ * understandable WITHOUT opening the database, because that is what an operator
+ * actually needs at 3am.
+ */
+
 import { parseArgs } from "node:util";
 import type { AnomalyTrigger } from "@obs/shared";
 import { classifyAnomalies } from "../classification/classify";
@@ -5,14 +40,6 @@ import { env } from "../env";
 import { detectionConfig } from "./config";
 import { runDetection, type ServiceDetectionResult } from "./engine";
 import { runRollup } from "./rollup";
-
-/**
- * Tier 1 CLI: roll up, then detect.
- *
- * Deliberately a one-shot command rather than a daemon. Detection is
- * idempotent and cheap, so running it on an interval from outside (or via
- * --watch) keeps the moving parts obvious while developing.
- */
 
 const USAGE = `
 Tier 1 detection — statistical only, no LLM.

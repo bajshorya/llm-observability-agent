@@ -1,3 +1,45 @@
+/**
+ * `pnpm eval` — the evaluation harness's command-line interface.
+ *
+ * WHAT THIS FILE DOES
+ * Runs the golden set against a provider and prints a scorecard; also captures
+ * new cases, lists the set, and shows a case's evidence.
+ *
+ * THE MOST USEFUL THING IT ENABLES IS A COMPARISON
+ * Run it against the stub and against a model. The stub scores by counting
+ * which detectors fired — it IS the statistical judgement, with no reading
+ * involved — so the difference between the two runs is the value Tier 2 adds,
+ * measured rather than asserted:
+ *
+ *     dismissed benign windows   stub 0/3      gemini-3.5-flash 3/3
+ *
+ * Every benign case the stub gets wrong is a case statistics alone cannot
+ * solve, which is the entire argument for the expensive tier.
+ *
+ * THE OPTIONS
+ *   --provider <name>  score a different provider without touching .env
+ *   --case <name>      one case, for iterating on a single failure
+ *   --list             the set and its labels
+ *   --show <name>      the exact evidence packet — read this first when a
+ *                      score looks wrong
+ *   --capture <name>   save the newest anomaly as a golden case
+ *
+ * CAPTURING A CASE
+ *     pnpm generate inject --scenario deploy-restart --minutes 5
+ *     pnpm detect
+ *     pnpm eval --capture deploy-restart --expect benign --severity low \
+ *               --note "recovered within a minute"
+ *
+ * `--capture` defaults to the most recently detected anomaly, which removes the
+ * id-copying step between commands. `scripts/capture-cases.sh` automates the
+ * whole set.
+ *
+ * EXIT CODE
+ * Non-zero when any verdict is wrong or any case failed. `pnpm eval` therefore
+ * fails when the system fails — a benchmark that exits 0 while reporting 0/3
+ * would be lying by omission.
+ */
+
 import { parseArgs } from "node:util";
 import { severities, type Severity } from "@obs/shared";
 import { renderContextForAnomaly } from "../classification/classify";
@@ -6,16 +48,6 @@ import { createProvider } from "../llm";
 import { loadCases, saveCase, type GoldenCase } from "./cases";
 import { runEval } from "./run";
 import type { CaseScore, EvalSummary } from "./score";
-
-/**
- * The eval harness.
- *
- * Its most useful output is the comparison it makes possible: run it against
- * the stub and against a model, and the difference is the value Tier 2 adds,
- * measured rather than asserted. The stub scores by counting which detectors
- * fired — which is precisely the statistical judgement — so every benign case
- * it gets wrong is a case statistics alone cannot solve.
- */
 
 const USAGE = `
 Golden-set evaluation for the Tier 2 classifier.

@@ -1,3 +1,24 @@
+/**
+ * Tests for the statistics primitives.
+ *
+ * WHAT THIS FILE COVERS
+ * `mean`, `stdDev`, `percentile` and `median` — the four functions every
+ * detector's arithmetic rests on. Tested directly rather than only through the
+ * detectors, because a subtle error here would surface as a mysterious
+ * detection threshold rather than an obvious arithmetic bug.
+ *
+ * WHAT IT PINS DOWN SPECIFICALLY
+ *   - `stdDev` uses the SAMPLE formula (n−1). A test asserts the exact value
+ *     for a known input, so switching to the population formula fails loudly
+ *     rather than quietly making every detector more sensitive.
+ *   - `percentile` INTERPOLATES between ranks rather than picking the nearest.
+ *   - Empty inputs return 0, not NaN, so a service with no baseline produces a
+ *     quiet "nothing to compare" instead of poisoning arithmetic downstream.
+ *
+ * No database, no clock, no network — these are pure functions with fixed
+ * inputs and known expected outputs.
+ */
+
 import { describe, expect, it } from "vitest";
 import { mean, median, percentile, stdDev } from "./stats";
 

@@ -1,3 +1,52 @@
+/**
+ * The entire data model — all six tables, in one file.
+ *
+ * WHAT THIS FILE DOES
+ * Defines every table with Drizzle, along with its indexes and the TypeScript
+ * types inferred from them. Nothing else in the codebase declares storage; if a
+ * column exists, it is here.
+ *
+ * THE SIX TABLES AND HOW THEY RELATE
+ *
+ *   logs             Raw entries, one row per log line. The only table written
+ *                    in the hot path. Indexed on (service, timestamp) because
+ *                    every detection query is time-windowed, and on
+ *                    (service, error_signature) so new-signature lookup is an
+ *                    index hit rather than a scan.
+ *
+ *   metrics_rollup   Per-minute aggregates computed from logs by the rollup
+ *                    worker. Detection reads these — sixty rows — instead of
+ *                    hundreds of thousands of raw ones. The UNIQUE index on
+ *                    (service, endpoint, bucket_start) is what makes the worker
+ *                    idempotent: re-running it upserts rather than duplicates.
+ *                    `endpoint = ""` is the sentinel for the service-wide row.
+ *
+ *   anomalies        Tier 1 writes window + triggers and leaves severity,
+ *                    summary and is_real_incident NULL. Tier 2 fills them.
+ *                    Those NULLs are the handoff contract between the tiers —
+ *                    "unclassified" is `severity IS NULL`, not a status value,
+ *                    so an anomaly is never classified twice however its status
+ *                    later moves.
+ *
+ *   correlations     Phase 3. Suspected commit, confidence, reasoning.
+ *   hypotheses       Phase 4. Root cause and suggested fix. `applied` defaults
+ *                    to false and stays there — the agent diagnoses, a human
+ *                    decides. That gate is deliberate.
+ *   llm_calls        One row per model invocation: tokens, latency, repair
+ *                    attempts, success. Failures included, because a call that
+ *                    burned tokens and produced nothing still cost quota. This
+ *                    table is what substantiates the two-tier cost claim.
+ *
+ * WHY SQLITE LOOKS LIKE POSTGRES HERE
+ * Timestamps are stored as epoch milliseconds and JSON as text — SQLite's
+ * equivalents of `timestamptz` and `jsonb`. The types are declared through
+ * Drizzle's mode options (`{ mode: "timestamp_ms" }`, `{ mode: "json" }`), so
+ * application code already works in `Date` and typed objects.
+ *
+ * Migrating to Postgres is therefore a change to the column builders in THIS
+ * FILE and the driver in `client.ts`. No query and no application code changes.
+ */
+
 import { randomUUID } from "node:crypto";
 import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type {
@@ -7,15 +56,6 @@ import type {
   LogMetadata,
   Severity,
 } from "@obs/shared";
-
-/**
- * SQLite schema, deliberately kept Postgres-shaped.
- *
- * Timestamps are stored as epoch milliseconds (`timestamp_ms`) and JSON as
- * text, which are SQLite's equivalents of `timestamptz` and `jsonb`. Moving to
- * Postgres later is a matter of swapping the column builders in this one file
- * and the driver in `client.ts` — no query or application code changes.
- */
 
 const id = () =>
   text("id")

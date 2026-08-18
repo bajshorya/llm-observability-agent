@@ -1,14 +1,51 @@
-import { z } from "zod";
-import { severitySchema } from "./anomaly";
-
 /**
  * Structured output contracts for the three LLM-backed agents.
  *
- * Every model response is parsed into one of these before any other code
- * touches it. Nothing downstream consumes free-form text. If a model returns
- * something malformed we find out here — loudly, at the boundary — rather
- * than three functions later when a field renders as `undefined`.
+ * WHAT THIS FILE DOES
+ * Defines the exact JSON shape each agent must return, as Zod schemas. Every
+ * model response is parsed into one of these before any other code touches it —
+ * nothing downstream ever consumes free-form model text. If a model returns
+ * something malformed, it is caught here, loudly, at the boundary, rather than
+ * three functions later when a field renders as `undefined`.
+ *
+ * WHAT "AGENT" MEANS IN THIS PROJECT
+ * A role that calls an LLM with its own prompt and its own output schema. Three
+ * are declared; one is built.
+ *
+ *   classifier   (Phase 2, built)   Is this flagged window a real incident,
+ *                                   how bad, and where? → `classificationSchema`
+ *   correlator   (Phase 3)          Which recent commit most likely caused it?
+ *                                   → `correlationSchema`
+ *   root_cause   (Phase 4)          Why did it break and what is the fix?
+ *                                   → `hypothesisSchema`
+ *
+ * Separate prompts and schemas per role rather than one mega-prompt: cheaper,
+ * independently evaluable, and each one's spend is attributable in `llm_calls`.
+ *
+ * WHAT IT EXPORTS
+ *   - `classificationSchema`  severity, summary, isRealIncident, affectedArea
+ *   - `correlationSchema`     suspected sha (nullable), confidence, reasoning,
+ *                             implicated files
+ *   - `hypothesisSchema`      root cause, suggested fix, confidence
+ *   - `llmAgents` / `llmAgentSchema`   the three agent names
+ *   - `llmCallStatsSchema`    per-call cost and latency record
+ *
+ * NOTES ON PARTICULAR FIELDS
+ * `isRealIncident` is the judgement statistics cannot make. Deploy restarts and
+ * scheduled batch jobs look identical to an outage on a graph; they do not look
+ * identical in the log text.
+ *
+ * `suspectedCommitSha` is nullable on purpose — "no candidate commit explains
+ * this" is a real answer, and a model with no null available will invent one.
+ *
+ * `llmCallStatsSchema.repairAttempts` counts how many times a response failed
+ * validation and had to be re-prompted. Recording it means a model that only
+ * produces valid output on the third try is visibly worse than one that gets it
+ * right first time, rather than looking identical in the cost table.
  */
+
+import { z } from "zod";
+import { severitySchema } from "./anomaly";
 
 /** Tier 2: does this candidate represent a real incident, and how bad? */
 export const classificationSchema = z.object({

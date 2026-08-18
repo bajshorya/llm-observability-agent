@@ -1,3 +1,39 @@
+/**
+ * Tests for the evidence packet builder.
+ *
+ * WHAT THIS FILE COVERS
+ * The two samplers and the renderer — budget caps, temporal spread, shape
+ * diversity, the per-minute timeline, the per-endpoint breakdown, and the
+ * marker lines the stub provider depends on.
+ *
+ * SEVERAL TESTS HERE ARE BUGS, RESTATED AS ASSERTIONS
+ * Each of these failed in production evidence before the test existed:
+ *
+ *   "keeps a one-off line that uniform sampling would drown"
+ *       A deploy banner, one line among two thousand routine ones, was dropped
+ *       by uniform sampling — leaving a benign window that no reader could have
+ *       judged correctly. This is why `sampleDiverse` exists.
+ *
+ *   "keeps the one narration line that explains the window"
+ *       The same failure at the renderer level rather than the sampler level.
+ *
+ *   "shows the window minute by minute"
+ *       Without a time axis, a burst that stopped after sixty seconds is
+ *       indistinguishable from five minutes of steady failure. A real
+ *       classification was wrong for exactly that reason.
+ *
+ *   "shows where latency is concentrated"
+ *       Without it, "the service is slow" and "one background path is slow
+ *       while users are fine" are identical evidence with opposite verdicts.
+ *
+ * WHY THIS IS TESTABLE AT ALL
+ * `context.ts` is pure — no database, no clock, no network. Same window in,
+ * same prompt out. That is what lets the packet's content be asserted with
+ * plain fixtures and no setup, and it is why a regression in classification
+ * quality can be attributed to the prompt rather than to whatever the sampler
+ * happened to pick that run.
+ */
+
 import { describe, expect, it } from "vitest";
 import type { AnomalyTrigger } from "@obs/shared";
 import {

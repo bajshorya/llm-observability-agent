@@ -1,3 +1,38 @@
+/**
+ * Environment configuration, validated once at startup.
+ *
+ * WHAT THIS FILE DOES
+ * Loads `.env`, validates every variable against a Zod schema, and exports the
+ * parsed result as `env`. If anything is invalid the process exits immediately
+ * with a per-field explanation, rather than failing mysteriously three layers
+ * deep when something reads an undefined value.
+ *
+ * It also exports `REPO_ROOT`, resolved from this file's own location via
+ * `import.meta.url` rather than from `process.cwd()`. That matters: it means the
+ * database lands in the same place whether you run a command from the workspace
+ * root or from inside a package.
+ *
+ * WHAT IT CONFIGURES
+ *   PORT, DATABASE_URL           the ingestion API and its store
+ *   LLM_PROVIDER, LLM_MODEL      which model the agents call, and an override
+ *   GEMINI/NVIDIA/OPENROUTER key credentials, all optional
+ *   OLLAMA_BASE_URL              local provider, no key needed
+ *
+ * TWO DETAILS THAT MATTER MORE THAN THEY LOOK
+ *
+ * `optionalSecret` treats an empty string as absent. An unset key in a `.env`
+ * file arrives as `""`, not as undefined, so without this every commented-out
+ * placeholder would read as a configured-but-blank credential. This is what
+ * makes `.env.example` copyable as-is.
+ *
+ * `LLM_PROVIDER` defaults to `stub`. The whole pipeline — detect, classify,
+ * persist, report — therefore runs end to end for someone who has just cloned
+ * the repo and has no API key at all, and the test suite needs no network.
+ * Spending money is opt-in, never the default.
+ *
+ * Uses Node's built-in `process.loadEnvFile`, so there is no dotenv dependency.
+ */
+
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";

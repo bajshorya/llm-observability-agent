@@ -1,17 +1,47 @@
 /**
- * Is `affectedArea` supported by the evidence, or did the model invent it?
+ * The grounding check — did the model invent the location it named?
  *
- * This check exists because of a specific observed failure. Asked to classify a
- * window whose endpoints were `/orders`, `/orders/:id` and
- * `/orders/:id/refund`, a small model answered `"/orders/checkout path"`. The
- * verdict and severity were both right; the one field naming *where* was
- * confidently fabricated. The prompt tells the model to answer "unknown" when
- * the evidence does not identify an area, and the interesting question is
- * whether it takes that option or fills the space.
+ * WHAT THIS FILE DOES
+ * One pure function, `checkGrounding(affectedArea, context)`, answering whether
+ * the area a model named is actually supported by the evidence it was shown.
  *
- * That is mechanically checkable — no judgement, no second model grading a
- * first one. If the area names a path, the path has to appear in what the model
- * was shown.
+ * WHY IT EXISTS
+ * A specific observed failure. Asked to classify a window whose endpoints were
+ * `/orders`, `/orders/:id` and `/orders/:id/refund`, a model answered
+ * `"/orders/checkout path"`. Verdict right, severity right — and the one field
+ * naming WHERE was confidently fabricated out of nothing.
+ *
+ * The prompt explicitly offers "unknown" for this case. So the question worth
+ * measuring is whether a model takes that option or fills the space, and that
+ * turns out to be mechanically checkable.
+ *
+ * THE RULES, IN ORDER
+ *
+ * 1. DECLINING COUNTS AS GROUNDED. "unknown", "n/a" or empty passes. A model
+ *    saying "I cannot tell" when the evidence is thin is doing exactly what it
+ *    was told, and scoring that as failure would push the prompt in precisely
+ *    the wrong direction — toward confident guessing.
+ *
+ * 2. IF IT NAMES A PATH, THE PATH MUST APPEAR VERBATIM. A path is the
+ *    highest-signal thing an area can contain and the easiest to fabricate, so
+ *    it is checked strictly. Trailing punctuation is stripped, because
+ *    `/orders/:id` and `/orders/:id.` are the same claim.
+ *
+ * 3. OTHERWISE, VOCABULARY OVERLAP. At least 60% of words of four or more
+ *    characters must appear in the evidence. So "postgres connection pool"
+ *    passes if the logs discuss those things, and "kafka consumer lag on
+ *    billing" does not. Short words are dropped because "the" and "pool" carry
+ *    very different evidential weight.
+ *
+ * WHY IT IS DELIBERATELY DUMB
+ * The obvious alternative is an LLM judge — and that means a model grading a
+ * model, which is unfalsifiable in exactly the way this project tries to avoid.
+ * A crude check whose failures you can reason about beats a sophisticated one
+ * you have to trust.
+ *
+ * WHAT IT CANNOT CATCH
+ * A plausible invention that reuses vocabulary already in the evidence. It
+ * catches confident fabrication, not subtle misattribution.
  */
 
 /** Fraction of an area's significant words that must appear in the evidence. */

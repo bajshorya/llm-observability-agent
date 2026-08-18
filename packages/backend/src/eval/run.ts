@@ -1,24 +1,45 @@
+/**
+ * Running the golden set through a provider.
+ *
+ * WHAT THIS FILE DOES
+ * Iterates the cases, sends each through the real `generateStructured` with the
+ * real system prompt, scores the result, and returns per-case scores plus a
+ * summary. The impure half of the eval — `score.ts` and `grounding.ts` hold the
+ * rules, this holds the calls.
+ *
+ * IT MEASURES THE PIPELINE, NOT A RECONSTRUCTION OF IT
+ * Every case goes through the same code path a real classification does,
+ * including the repair loop — which is itself part of what a provider is being
+ * judged on. A model that needs two repairs to produce the schema is worse than
+ * one that needs none, and the scorecard says so rather than hiding it behind a
+ * successful parse.
+ *
+ * EVAL CALLS ARE NOT WRITTEN TO `llm_calls` — DELIBERATELY
+ * That table is the accounting behind a claim about what RUNNING THE SYSTEM
+ * costs. Filling it with calls that classified no anomaly would inflate exactly
+ * the number it exists to substantiate, and would make the funnel — anomalies
+ * raised versus model calls made — meaningless.
+ *
+ * So no sink is passed, and the eval reports its own spend from the returned
+ * stats instead. This is why `generateStructured` takes an optional injected
+ * sink rather than writing to the database itself.
+ *
+ * FAILURES ARE COLLECTED, NOT THROWN
+ * A case that never produced a schema-valid answer is recorded in `failures`
+ * and counted separately from wrong answers. That distinction is what let a
+ * quota-exhausted run report "5 cases produced no valid answer" instead of
+ * looking like a sudden collapse in model quality.
+ *
+ * `onCaseDone` streams results to the caller so the CLI can print each verdict
+ * as it lands, rather than going silent for the minute a full run takes.
+ */
+
 import { classificationSchema } from "@obs/shared";
 import { CLASSIFIER_SYSTEM_PROMPT } from "../classification/prompt";
 import { generateStructured } from "../llm/structured";
 import type { LlmProvider } from "../llm/types";
 import type { GoldenCase } from "./cases";
 import { scoreCase, summarise, type CaseScore, type EvalSummary } from "./score";
-
-/**
- * Run the golden set through a provider.
- *
- * Every case goes through `generateStructured` with the real system prompt, so
- * this measures the pipeline rather than a reconstruction of it — including the
- * repair loop, which is itself part of what a provider is being judged on. A
- * model that needs two repairs to produce the schema is worse than one that
- * needs none, and the scorecard says so.
- *
- * Eval calls are **not** written to `llm_calls`. That table is the accounting
- * behind a claim about what running the system costs; filling it with calls
- * that classified no anomaly would inflate exactly the number it exists to
- * substantiate. The eval reports its own spend instead.
- */
 
 export interface EvalFailure {
   name: string;

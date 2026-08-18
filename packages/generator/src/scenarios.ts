@@ -1,15 +1,56 @@
+/**
+ * Synthetic traffic for a fake orders service — the healthy baseline and all
+ * six injectable scenarios.
+ *
+ * WHAT THIS FILE DOES
+ * Everything about what the generated traffic looks like. `generateMinute()` is
+ * the single entry point: given a traffic profile, a window start, a random
+ * source and optionally a scenario, it returns the log entries for that window.
+ * `index.ts` handles the CLI and HTTP; this file decides what the data *is*.
+ *
+ * WHY IT EXISTS BEFORE THE DETECTORS DID
+ * Built first, on purpose. It gave us realistic data to develop against from
+ * day one, it drives the demo, and it is where the golden eval cases come from.
+ *
+ * WHY THE BASELINE IS NOT A FLAT LINE
+ * Healthy traffic has to be *believable*. A constant request rate with a uniform
+ * error rate would let a naive detector look far better than it is. So the
+ * baseline carries a gentle diurnal curve, per-minute jitter, four weighted
+ * endpoints with different latency profiles, and three kinds of error that occur
+ * in normal operation — timeouts, 404s and 429s. Those baseline errors are what
+ * the new-signature detector must NOT flag as novel.
+ *
+ * THE SIX SCENARIOS, AND THE SPLIT THAT MATTERS
+ * Three are real incidents; three are benign windows that trip Tier 1 anyway.
+ *
+ *   error-spike        incident  40× error rate from known failure kinds
+ *   latency-jump       incident  p95 ×8 across every endpoint, no new errors
+ *   new-error          incident  a novel TypeError returning 500s
+ *   deploy-restart     BENIGN    a burst that recovers inside the window
+ *   batch-job          BENIGN    a background path is slow; users are fine
+ *   rate-limit-storm   BENIGN    one client throttled; nothing else degrades
+ *
+ * The benign three exist to test the only thing Tier 2 can do that statistics
+ * cannot. `deploy-restart` is the sharpest: it fires the SAME TWO DETECTORS at
+ * comparable magnitudes as `new-error`, so no threshold can separate them. The
+ * only difference is that its logs say "v1.4.2 starting up" and the errors stop
+ * after a minute.
+ *
+ * TWO CAPABILITIES THE SCENARIO INTERFACE HAS, AND WHY
+ *   `progress`   position within the injection, 0..1, so a scenario can have
+ *                phases. "Already recovering" is the strongest benign signal
+ *                there is and a constant profile cannot express it.
+ *   `context()`  extra entries: narration ("Rollout complete"), and requests
+ *                the scenario itself makes. The second half was added after a
+ *                measured failure — the first `batch-job` multiplied EVERY
+ *                request's latency and called itself benign, which made it an
+ *                incident wearing a benign label. A scenario has to contain its
+ *                impact, not narrate it away.
+ */
+
 import { randomUUID } from "node:crypto";
 import type { LogEntryInput } from "@obs/shared";
 import type { Rng } from "./random";
-
-/**
- * Synthetic traffic for a fake orders service.
- *
- * This exists before the detectors do, on purpose: it gives us realistic data
- * to develop against from day one, and later doubles as the demo driver.
- * Healthy traffic has to be *believable* — a flat line with a uniform error
- * rate would let a naive detector look far better than it is.
- */
 
 export interface TrafficProfile {
   service: string;

@@ -1,21 +1,48 @@
+/**
+ * The golden set — loading, validating and saving labelled evaluation cases.
+ *
+ * WHAT THIS FILE DOES
+ * Defines the schema for a golden case, loads them from `cases/*.json`, and
+ * writes new ones during capture. Six cases exist: three real incidents, three
+ * benign windows that trip Tier 1 anyway.
+ *
+ * WHAT A CASE CONTAINS
+ *   name, scenario, capturedAt   provenance
+ *   expect.isRealIncident        the verdict a competent on-call would give
+ *   expect.severity              scored within one band
+ *   expect.note                  WHY that is the right answer, for humans
+ *   context                      the entire rendered prompt, as a string
+ *
+ * WHY `context` IS A STORED STRING AND NOT A STRUCTURE
+ * This is the central design decision of the harness. The alternative — storing
+ * a structured input and re-rendering it at eval time — measures the wrong
+ * thing: if the renderer changes, every fixture changes silently with it, and
+ * the eval keeps reporting on whatever the renderer does today.
+ *
+ * A stored string is a FIXED ARTEFACT. It is exactly what some real pipeline run
+ * produced, so scores are comparable across prompt and packet versions.
+ *
+ * The cost is real and accepted: when the evidence packet changes, every case
+ * must be re-captured. `scripts/capture-cases.sh` exists for precisely that,
+ * and it has been needed three times.
+ *
+ * WHY CASES ARE VALIDATED ON LOAD RATHER THAN TRUSTED
+ * A case missing `isRealIncident` would score as `undefined !== true` — a
+ * silent wrong answer recorded against the model. That is the worst failure
+ * mode a benchmark can have, so a malformed file throws with the field named.
+ *
+ * WHY THE LABELS ARE HALF BENIGN
+ * A set of only real incidents cannot distinguish a competent classifier from
+ * one that answers "critical incident" to everything. The benign half is what
+ * makes the score meaningful — and it is the half that found two of the labels
+ * were originally wrong.
+ */
+
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { severitySchema } from "@obs/shared";
-
-/**
- * The golden set.
- *
- * Each case is a real prompt captured from a real pipeline run, paired with the
- * verdict a competent on-call engineer would give it. Captured rather than
- * handwritten on purpose: a fixture composed by hand drifts from what the
- * system actually sends, and then the eval measures a prompt nobody uses.
- *
- * Half the set is benign. That half is the point — every one of those windows
- * tripped Tier 1, and a classifier that cannot dismiss them is a classifier
- * that adds nothing to the statistics it sits behind.
- */
 
 export const CASES_DIR = join(dirname(fileURLToPath(import.meta.url)), "cases");
 

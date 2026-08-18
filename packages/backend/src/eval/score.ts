@@ -1,24 +1,50 @@
+/**
+ * Scoring — turning a model's answers into numbers, purely.
+ *
+ * WHAT THIS FILE DOES
+ * Compares one classification against its label (`scoreCase`) and aggregates a
+ * run into a scorecard (`summarise`). No I/O, no provider calls — those live in
+ * `run.ts` — so the scoring rules are testable with fixed inputs.
+ *
+ * THE THREE MEASURES, IN ORDER OF HOW MUCH THEY MATTER
+ *
+ * 1. THE VERDICT — real incident or not. The judgement the whole tier exists to
+ *    make, and the only one with an unambiguous right answer.
+ *
+ * 2. SEVERITY, WITHIN ONE BAND. The line between high and critical is a matter
+ *    of taste; the line between low and critical is not. Exact match is
+ *    reported but is not the headline — demanding it would score agreement with
+ *    one labeller's judgement rather than competence.
+ *
+ * 3. GROUNDING — did it invent a location? See `grounding.ts`.
+ *
+ * THE DESIGN DECISION THAT MATTERS MOST: THE SPLIT SUMMARY
+ * Verdict accuracy is reported SEPARATELY for benign and incident cases.
+ *
+ * A model that answers "critical incident" to everything scores 100% on the
+ * incident half. Blended with three benign cases that reads as 50% — mediocre,
+ * but not obviously pathological. Split, it reads 3/3 and 0/3, which is
+ * instantly diagnostic: the model is not judging, it is defaulting.
+ *
+ * That is not a hypothetical designed-for case. It is exactly what the first
+ * run against a small model produced, and the split is what made it visible in
+ * one glance.
+ *
+ * FAILURES ARE COUNTED SEPARATELY FROM WRONG ANSWERS
+ * A case that never produced a schema-valid response is a provider failure —
+ * usually quota exhaustion — not bad judgement. Averaging the two together
+ * would blur two completely different problems into one number, and it is the
+ * reason a quota-exhausted run reports honestly instead of looking like a
+ * catastrophic quality regression.
+ *
+ * DELIBERATELY NOT MEASURED: SUMMARY WORDING
+ * Grading prose needs either a human or a second model marking the first one's
+ * homework. A metric that cannot be trusted is worse than no metric.
+ */
+
 import type { Classification, Severity } from "@obs/shared";
 import { checkGrounding, type GroundingResult } from "./grounding";
 import type { GoldenCase } from "./cases";
-
-/**
- * Scoring, kept pure and separate from the calls that produce the answers.
- *
- * Three things are measured, in order of how much they matter:
- *
- *   1. **The verdict.** Real incident or not. This is the judgement the whole
- *      tier exists to make, and the only one with an unambiguous right answer.
- *   2. **Severity, within one band.** The line between high and critical is a
- *      matter of taste; the line between low and critical is not. Exact match
- *      is reported too, but it is not the headline — demanding it would be
- *      scoring agreement with one labeller's taste.
- *   3. **Grounding.** Did it invent a location?
- *
- * Deliberately not measured: summary wording. Grading prose needs either a
- * human or a second model marking the first one's homework, and a metric that
- * cannot be trusted is worse than no metric.
- */
 
 export const SEVERITY_RANK: Record<Severity, number> = {
   low: 0,

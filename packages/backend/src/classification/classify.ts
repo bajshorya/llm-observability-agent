@@ -1,3 +1,62 @@
+/**
+ * Tier 2 orchestration — loading evidence, calling the model, persisting the
+ * verdict.
+ *
+ * WHAT THIS FILE DOES
+ * For each unclassified anomaly: assembles the evidence packet from the
+ * database, renders it, sends it through `generateStructured`, and writes back
+ * severity, summary and is_real_incident. It is the impure counterpart to the
+ * pure `context.ts`.
+ *
+ * WHY IT IS A SEPARATE PASS FROM DETECTION
+ * Tier 2 runs as its own command rather than inside the detection engine. That
+ * keeps detection runnable with no key, no network and no cost — which is the
+ * property that lets "the statistical layer works on its own" stay true rather
+ * than becoming a claim nobody can check.
+ *
+ * WHAT "UNCLASSIFIED" MEANS, AND WHY IT IS NOT A STATUS
+ * `severity IS NULL`. Status tracks the incident's lifecycle and later phases
+ * will move it; the NULL columns are the ones Tier 1 declared it does not own.
+ * Keying off them means an anomaly is never classified twice however its status
+ * later changes — which is what makes `pnpm classify` safe to run on a loop.
+ *
+ * FIVE QUERIES PER ANOMALY, RUN IN PARALLEL
+ *   loadMetrics          totals — percentiles from rollups, counts from logs
+ *   loadTimeline         the window minute by minute
+ *   loadEndpointMetrics  per-path latency and error counts
+ *   loadSignatures       error signatures grouped with counts, in SQL
+ *   loadLogLines         raw lines, error/warn and info separately
+ *
+ * THE ONE DELIBERATE DEPARTURE FROM "DETECTION READS AGGREGATES"
+ * Counts come from the raw log table, not the rollups. The rollup worker
+ * resumes from its last written bucket, so logs arriving for an
+ * already-aggregated minute leave that bucket stale. Tier 1 tolerates it — it
+ * compares shapes, and an understated count still clears a 3σ bar. A prompt
+ * cannot: telling a model "67 errors" directly above a signature table listing
+ * 351 occurrences hands it contradictory evidence and invites it to reconcile
+ * the two by guessing. That is not hypothetical; it was observed. Two indexed
+ * queries are worth the correctness.
+ *
+ * THE STATUS TRANSITION THIS FILE OWNS
+ * A benign verdict sets status to `dismissed`. That is the entire point of the
+ * tier — statistics flagged it, reading it said otherwise — and without it the
+ * correlation agent would go looking for the commit that caused a deploy
+ * restart.
+ *
+ * FAILURE HANDLING
+ * One anomaly failing does not stop the run; the row keeps its NULL severity
+ * and is picked up next time. That is right for the most likely cause — a
+ * free-tier quota that resets in an hour. `limit` defaults to 10 so a backlog
+ * cannot drain a day's quota in a single run.
+ *
+ * ROW SCAN CAPS
+ * 2000 rows of each kind per anomaly, purely to give the sampler a window to
+ * spread across. The caps are EQUAL for a reason learned the hard way: healthy
+ * rows were once capped ten times lower, which covered the first twenty-five
+ * seconds of a busy window and silently discarded every announcement made after
+ * it — including the line saying the incident had ended.
+ */
+
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import {
   classificationSchema,
@@ -19,15 +78,6 @@ import {
   type ContextSignature,
 } from "./context";
 import { CLASSIFIER_SYSTEM_PROMPT } from "./prompt";
-
-/**
- * Tier 2: the LLM stage.
- *
- * Runs over anomalies Tier 1 left unclassified, and does so as a separate pass
- * rather than inside the detection engine. Detection stays runnable with no
- * key, no network and no cost — which is the property that lets the honest
- * claim "the statistical layer works on its own" keep being true.
- */
 
 /** Sentinel endpoint for service-wide rollup rows. */
 const SERVICE_LEVEL = "";

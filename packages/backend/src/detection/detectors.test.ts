@@ -1,3 +1,31 @@
+/**
+ * Tests for the three Tier 1 detectors.
+ *
+ * WHAT THIS FILE COVERS
+ * Every detector, in both directions: the case that should fire, the case just
+ * below the threshold that should not, and the absolute floor that overrides a
+ * dramatic-looking ratio.
+ *
+ * THEY RUN AGAINST THE REAL CONFIG, NOT A FIXTURE
+ * `detectionConfig` is imported directly rather than mocked. That is
+ * deliberate: a change to a threshold that breaks a documented assumption fails
+ * HERE, at test time, rather than silently altering the system's sensitivity in
+ * production. It makes the config and its tests a single unit.
+ *
+ * The trade-off is that tuning a threshold may require updating a test — which
+ * is the point. Changing sensitivity should be a deliberate act with a visible
+ * cost, not an edit to one number.
+ *
+ * WHAT THE FIXTURES ENCODE
+ * `NOISY_ERROR_BASELINE` cycles 1..6 across 60 minutes, giving mean 3.5 and
+ * sample stddev ~1.72 — so the 3σ threshold lands at ~8.66. The comments on
+ * each test carry that arithmetic, so an assertion like "50 errors over 5
+ * minutes fires" can be checked by hand rather than taken on faith.
+ *
+ * This is the layer that can be PROVEN correct with fixed inputs and known
+ * outputs, which is what earns it the right to decide what the LLM never sees.
+ */
+
 import { describe, expect, it } from "vitest";
 import { detectionConfig } from "./config";
 import {
@@ -8,12 +36,6 @@ import {
   type BaselineStats,
   type WindowStats,
 } from "./detectors";
-
-/**
- * Tests run against the **real** config rather than a fixture, so a change to
- * a threshold that breaks an assumption fails here rather than silently
- * altering the system's sensitivity in production.
- */
 const config = detectionConfig;
 
 function makeWindow(overrides: Partial<WindowStats> = {}): WindowStats {

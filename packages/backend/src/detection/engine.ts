@@ -1,3 +1,59 @@
+/**
+ * The detection engine — everything the pure detectors deliberately do not do.
+ *
+ * WHAT THIS FILE DOES
+ * Decides which window to examine, loads the statistics for it, hands them to
+ * `runDetectors`, and persists whatever fired. It contains NO detection logic
+ * of its own, which is what keeps the provable part provable.
+ *
+ *     engine.ts  ─── loads ──▶  detectors.ts (pure)  ─── triggers ──▶  engine.ts
+ *        │                                                                 │
+ *     database                                                          database
+ *
+ * HOW THE WINDOW IS CHOSEN
+ * The window ends at the most recent closed minute PRESENT IN THE ROLLUPS,
+ * not at `Date.now()`. That way detection and the rollup worker cannot disagree
+ * about where "now" is — otherwise a slow rollup would make every run examine a
+ * window with no data in it.
+ *
+ *   window   = the 5 minutes before that point
+ *   baseline = the 60 minutes before the window, with a 1-minute gap so the
+ *              window's own data cannot leak into the baseline it is judged
+ *              against and quietly raise its own bar
+ *
+ * PER SERVICE, IN ORDER
+ *   1. Load the baseline. If under 30 minutes exist, SKIP and say so — on a
+ *      service with no history every signature is novel and every number
+ *      unusual, so running detectors early produces a burst of meaningless
+ *      anomalies the moment the system starts.
+ *   2. Load window stats: counts and percentiles from the rollups, error
+ *      signatures from the raw log table.
+ *   3. Run the detectors.
+ *   4. If anything fired, persist.
+ *
+ * THE MERGE RULE, WHICH IS WHAT BOUNDS TIER 2'S COST
+ * A sustained incident fires on EVERY run. Rather than creating a new anomaly
+ * each time, a recent anomaly whose window ended within the merge gap is
+ * extended. Without this a ten-minute outage would produce a wall of
+ * near-identical rows — and one duplicated LLM call for each of them.
+ *
+ * Anomalies with status `open` OR `dismissed` are mergeable. Dismissed is
+ * included because Tier 2 dismisses benign patterns and the traffic that
+ * produced them usually continues; without it, every subsequent run would buy
+ * another model call to reach the same verdict.
+ *
+ * With one guard: folding into a DISMISSED anomaly is only safe while nothing
+ * new has happened. A trigger kind that was not part of what the classifier
+ * dismissed is evidence it has not seen, so that starts a fresh anomaly and
+ * earns its own verdict — otherwise a real incident beginning shortly after a
+ * benign one would silently inherit the dismissal and never be looked at.
+ *
+ * WHAT IT DELIBERATELY LEAVES EMPTY
+ * `severity`, `summary` and `is_real_incident` are written as NULL. They belong
+ * to Tier 2, and an anomaly is a complete, valid record without them — that is
+ * the handoff contract between the tiers.
+ */
+
 import { and, desc, eq, gte, inArray, isNotNull, lt, max } from "drizzle-orm";
 import type { AnomalyTrigger } from "@obs/shared";
 import { db } from "../db/client";
@@ -10,15 +66,6 @@ import {
   type WindowStats,
 } from "./detectors";
 import { mean } from "./stats";
-
-/**
- * Detection engine: everything the pure detectors deliberately do not do.
- *
- * Loads window and baseline statistics from the rollups and log table, hands
- * them to `runDetectors`, and persists the result. Severity, summary and
- * `is_real_incident` are left null — those belong to Tier 2, and an anomaly is
- * a complete, valid record without them.
- */
 
 const MINUTE_MS = 60_000;
 /** Sentinel endpoint for service-wide rollup rows. */

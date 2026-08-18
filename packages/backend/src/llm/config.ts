@@ -1,10 +1,40 @@
-import type { LlmProviderName } from "../env";
-
 /**
- * LLM tunables, in one place for the same reason the detection thresholds are:
- * so the cost and reliability behaviour of the system can be reasoned about
- * without reading five files.
+ * LLM tunables and default models.
+ *
+ * WHAT THIS FILE DOES
+ * Holds every number governing how the model is called — temperature, output
+ * ceiling, timeouts, retry and repair limits — plus the default model for each
+ * provider and the OpenAI-compatible base URLs.
+ *
+ * In one place for the same reason the detection thresholds are: the cost and
+ * reliability behaviour of the system is the sum of these values, and they
+ * cannot be reasoned about while scattered across five files.
+ *
+ * THE VALUES, AND WHY
+ *   temperature 0.1        Classification is a judgement, not a composition.
+ *                          The same window must classify the same way twice, or
+ *                          the eval harness measures noise instead of quality.
+ *   maxOutputTokens 800    The answer is four short fields. This is a guard
+ *                          against a model that decides to narrate, not a
+ *                          budget we expect to use.
+ *   timeoutMs 45000        Free tiers are slow. They should not hang.
+ *   maxHttpAttempts 3      429s are the steady state of a free tier.
+ *   maxRepairAttempts 2    A model that cannot produce the schema twice will
+ *                          not produce it on the fifth try, and every retry
+ *                          costs real tokens.
+ *
+ * THE DEFAULT MODELS
+ * All sit on a free tier. The Gemini default is a MEASURED choice, not a
+ * preference: it scores 6/6 on the golden set where the previous default scored
+ * 1/3 on the benign half. See `eval/` and DOCUMENTATION-EVALS.md §10.
+ *
+ * Free-tier model identifiers churn — providers retire and rename them — so
+ * `LLM_MODEL` overrides any of these without a code change. That is the
+ * intended fix when one starts returning 404, and it is also how to get past a
+ * 429, since quota is bucketed per model.
  */
+
+import type { LlmProviderName } from "../env";
 export const llmConfig = {
   /**
    * Classification is a judgement, not a composition. Near-zero temperature
