@@ -1,15 +1,39 @@
 /**
- * Error-signature normalisation.
+ * Error-signature normalisation — turning many raw messages into one stable key.
  *
- * Two log lines that describe the same failure rarely match byte-for-byte —
- * they differ by request id, row id, timestamp, or a quoted value. Stripping
- * that variable detail collapses them onto a stable signature, which is what
- * makes "have we ever seen this error before?" a cheap set-membership check
- * instead of a fuzzy-matching problem.
+ * WHAT THIS FILE DOES
+ * Exports a single function, `normalizeErrorSignature`, which takes a raw log
+ * message and strips out every part that varies between occurrences of the same
+ * failure: uuids, timestamps, hex blobs, quoted values, file paths, and plain
+ * numbers. What comes back is a template.
  *
- * This powers the Tier 1 new-error-signature detector, which is the one
- * statistical detector that can catch a brand-new failure on its very first
- * occurrence — before it has had time to become a spike.
+ *     "Order 12778 not found"  ─┐
+ *     "Order 44012 not found"  ─┼──▶  "Order <num> not found"
+ *     "Order 90311 not found"  ─┘
+ *
+ * WHY IT EXISTS
+ * Two log lines describing the same failure almost never match byte-for-byte.
+ * Collapsing them onto a shared key turns "have we ever seen this error
+ * before?" from a fuzzy-matching problem into a set-membership check.
+ *
+ * WHERE IT IS USED
+ *   1. At ingest (`routes/ingest.ts`), computed once per warn/error/fatal entry
+ *      and stored on the row, so the new-signature detector is an indexed
+ *      lookup rather than a regex pass over millions of rows at query time.
+ *   2. By the Tier 1 `new_error_signature` detector — the only detector that
+ *      catches a brand-new failure on its first occurrence, before it has had
+ *      time to become a statistical spike.
+ *   3. By the evidence sampler (`classification/context.ts`), which groups log
+ *      lines by normalised shape so the model sees one example of each kind
+ *      rather than twenty copies of the most common one.
+ *
+ * MEASURED EFFECT
+ * In the seeded baseline, 87 distinct raw "Rate limit exceeded for client N"
+ * messages collapse to one signature. Without this, the new-signature detector
+ * would flag ~170 "novel" errors per minute of perfectly healthy traffic and be
+ * useless.
+ *
+ * The rules below are ORDER-DEPENDENT — see the comments on each.
  */
 
 const REPLACEMENTS: readonly (readonly [RegExp, string])[] = [

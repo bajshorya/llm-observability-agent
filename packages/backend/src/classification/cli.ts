@@ -1,3 +1,41 @@
+/**
+ * `pnpm classify` — the Tier 2 operator interface.
+ *
+ * WHAT THIS FILE DOES
+ * Parses arguments, drives `classify.ts`, and formats the results. Presentation
+ * only; every decision lives in the module it calls.
+ *
+ * WHY IT IS A SEPARATE COMMAND FROM `pnpm detect`
+ * The two tiers have genuinely different operational characters. Detection is
+ * free and can run every thirty seconds; classification spends quota and should
+ * not. Separating them makes the expensive one an explicit act rather than a
+ * side effect of monitoring.
+ *
+ * THE OPTIONS, AND WHAT EACH IS FOR
+ *   --limit <n>        cap per run (default 10), so a backlog cannot drain a
+ *                      day's free-tier quota in one go
+ *   --anomaly <id>     classify one specific anomaly, even if already done
+ *   --provider <name>  override LLM_PROVIDER for this run without editing .env
+ *   --preview <id>     print the exact prompt and CALL NOTHING
+ *   --stats            the detection funnel and per-provider usage
+ *
+ * `--preview` IS THE DEBUGGING TOOL THAT MATTERS
+ * When a classification looks wrong, the first question is always what the
+ * model was actually shown — and this answers it without spending a call. It is
+ * also the single most useful command for understanding the system, because it
+ * makes the abstraction concrete in one screen.
+ *
+ * `--stats` IS THE EVIDENCE FOR THE COST CLAIM
+ * It prints the funnel — how many anomalies were raised, how many reached a
+ * model, how many were real versus dismissed — alongside tokens, latency and
+ * repair counts per provider. Every anomaly not in `classified` is a model call
+ * that never happened.
+ *
+ * EXIT CODE
+ * Non-zero when any anomaly failed to classify, so a scheduled run surfaces
+ * quota exhaustion rather than silently doing nothing.
+ */
+
 import { parseArgs } from "node:util";
 import { env, llmProviderNames, type LlmProviderName } from "../env";
 import { createProvider } from "../llm";
@@ -9,12 +47,6 @@ import {
   previewPrompt,
   type ClassificationOutcome,
 } from "./classify";
-
-/**
- * Tier 2 CLI. Separate command from `detect` by default, because the two tiers
- * have genuinely different operational characters: detection is free and can
- * run every thirty seconds, classification costs quota and should not.
- */
 
 const USAGE = `
 Tier 2 classification — LLM judgement over Tier 1 anomalies.

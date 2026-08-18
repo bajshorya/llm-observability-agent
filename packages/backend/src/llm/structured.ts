@@ -1,21 +1,56 @@
+/**
+ * `generateStructured` — the one function every LLM agent calls.
+ *
+ * WHAT THIS FILE DOES
+ * Prompt in, schema-valid object out. It is the only place in the system where
+ * a model response becomes typed data, and nothing downstream of it ever
+ * consumes free-form model text.
+ *
+ * THE LOOP
+ *
+ *     call provider
+ *         → extract JSON        (json.ts, handles fences and preamble)
+ *         → schema.safeParse    (Zod)
+ *         → valid?   yes → return { value, stats }
+ *                    no  → re-prompt with the model's OWN OUTPUT and the
+ *                          specific validation errors, up to maxRepairAttempts
+ *         → still invalid → throw LlmStructuredError
+ *
+ * WHY THE REPAIR PROMPT INCLUDES THE PREVIOUS RESPONSE
+ * Telling a model "that was invalid" without showing it what "that" was
+ * produces a second guess rather than a correction. It also re-sends the
+ * original evidence, so the model is correcting its answer rather than
+ * answering a new question with less context.
+ *
+ * Capped at two repairs: a model that cannot produce the shape twice in a row
+ * will not produce it on the fifth try, and every retry costs real tokens —
+ * without a ceiling the cost table would quietly fill with them.
+ *
+ * TRANSPORT FAILURES SKIP THE LOOP ENTIRELY
+ * A `LlmProviderError` means the call did not happen properly, not that the
+ * answer was wrong. HTTP-level retries have already occurred inside the
+ * provider, and no amount of re-prompting fixes a bad API key. The cost of the
+ * failed call is recorded and the error propagates.
+ *
+ * NO DATABASE IMPORT IN THIS FILE — DELIBERATELY
+ * Cost records go to an INJECTED SINK (`onCall`) rather than being written
+ * here. That keeps the retry and validation logic testable with a fake provider
+ * and no I/O at all, exactly the way the Tier 1 detectors are testable. The
+ * caller passes `recordLlmCall` in production; tests pass an array.
+ *
+ * WHAT GETS RECORDED
+ * One row per invocation whatever the outcome, with tokens summed across every
+ * attempt, total wall-clock latency, the repair count, and success. Failures
+ * are recorded too — a call that burned tokens over three attempts and produced
+ * nothing still spent quota, and a table that logged only successes would hide
+ * exactly the spend worth knowing about.
+ */
+
 import type { z } from "zod";
 import type { LlmAgent, LlmCallStats } from "@obs/shared";
 import { llmConfig, type LlmConfig } from "./config";
 import { parseJsonObject } from "./json";
 import { LlmProviderError, type LlmProvider } from "./types";
-
-/**
- * The one function every agent calls: prompt in, schema-valid object out.
- *
- * Nothing downstream of this consumes free-form model text. If a response
- * cannot be made to satisfy the schema, this throws — the failure surfaces at
- * the boundary rather than as an `undefined` field rendering in the dashboard
- * three layers later.
- *
- * There is no database import in this file on purpose. Cost records go to an
- * injected sink, which keeps the retry and validation logic testable with a
- * fake provider and no I/O, the same way the Tier 1 detectors are.
- */
 
 export interface LlmCallRecord extends LlmCallStats {
   anomalyId: string | null;

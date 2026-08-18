@@ -1,13 +1,45 @@
-import { z } from "zod";
-
 /**
- * Tier 1 output: what the cheap statistical detectors found.
+ * Tier 1 output — what the cheap statistical detectors found, and the vocabulary
+ * for an anomaly's whole lifecycle.
  *
- * No LLM has seen the data at this point. An anomaly candidate is a time
- * window plus the signal(s) that tripped — enough for a human to understand
- * the alert on its own, and enough context to hand to Tier 1's more
- * expensive successor.
+ * WHAT THIS FILE DOES
+ * Defines the shapes Tier 1 produces and Tier 2 consumes. No LLM has seen the
+ * data at this point: an anomaly candidate is a time window plus the signal(s)
+ * that tripped — enough for a human to understand the alert on its own, and
+ * enough context to hand to Tier 1's more expensive successor.
+ *
+ * WHAT IT EXPORTS
+ *   - `anomalyStatuses` / `anomalyStatusSchema`
+ *         open → correlated → diagnosed, plus dismissed and resolved.
+ *         Tier 1 only ever writes `open`; Tier 2 may write `dismissed`;
+ *         Phases 3 and 4 own the rest.
+ *   - `severities` / `severitySchema`
+ *         low | medium | high | critical. Written by Tier 2, never Tier 1.
+ *   - `anomalyTriggerSchema`
+ *         a DISCRIMINATED UNION on `kind`, with one member per detector.
+ *   - `anomalyCandidateSchema`
+ *         service + window + at least one trigger. What Tier 1 emits.
+ *
+ * WHY THE TRIGGERS ARE A DISCRIMINATED UNION
+ * Each detector has genuinely different evidence, and flattening that into a
+ * shared bag of optional fields would lose it:
+ *
+ *   error_rate_spike     observed count, baseline mean, standard deviation,
+ *                        z-score — the numbers that justify the alert.
+ *   latency_jump         which percentile, observed, baseline, ratio.
+ *   new_error_signature  the normalised signature, a raw sample message a
+ *                        human can actually read, and occurrence count.
+ *
+ * Because it is discriminated, `switch (trigger.kind)` is exhaustively checked
+ * by TypeScript — adding a fourth detector will fail compilation everywhere
+ * that renders or interprets triggers, rather than silently falling through.
+ * Both CLIs and the evidence builder rely on this.
+ *
+ * The triggers are stored as JSON on the `anomalies` row, so this schema is
+ * also the on-disk format, not just an in-memory type.
  */
+
+import { z } from "zod";
 
 export const anomalyStatuses = [
   "open",

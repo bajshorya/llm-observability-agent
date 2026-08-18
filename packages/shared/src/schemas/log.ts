@@ -1,12 +1,47 @@
-import { z } from "zod";
-
 /**
- * The wire contract for a single structured log entry.
+ * The wire contract for log ingestion — the shape of everything entering the
+ * system.
  *
- * Every entry crossing the ingestion boundary is validated against this.
- * Malformed entries are rejected rather than stored — the store is only ever
- * as trustworthy as what we let into it.
+ * WHAT THIS FILE DOES
+ * Defines and exports the Zod schemas for a single log entry, a batch of them,
+ * and the result of trying to ingest that batch. Every entry crossing the
+ * ingestion boundary is validated against `logEntrySchema`; malformed entries
+ * are rejected rather than stored, because the store is only ever as
+ * trustworthy as what is let into it.
+ *
+ * WHAT IT EXPORTS
+ *   - `logEntrySchema`      one entry: timestamp, service, level, message,
+ *                           metadata. The type `LogEntry` is inferred from it.
+ *   - `logMetadataSchema`   known fields typed, anything else allowed through.
+ *   - `ingestBatchSchema`   an array of entries, capped at MAX_BATCH_SIZE.
+ *   - `ingestResultSchema`  accepted / rejected counts plus per-index reasons.
+ *   - `LOG_LEVELS`, `ERROR_LEVELS`, `SIGNATURE_LEVELS` and their predicates.
+ *
+ * THE THREE LEVEL SETS, WHICH ARE DELIBERATELY DIFFERENT
+ *   `LOG_LEVELS`       every level that exists: info, warn, error, fatal.
+ *   `ERROR_LEVELS`     what counts towards the error-rate detector: error,
+ *                      fatal. A 404 or a 429 is not a failure of the service.
+ *   `SIGNATURE_LEVELS` what gets an error signature computed: warn, error,
+ *                      fatal — wider on purpose. A 429 is not an error, but a
+ *                      *new kind* of 4xx appearing is still a regression worth
+ *                      catching, and restricting signatures to error level
+ *                      would blind the new-signature detector to it.
+ *
+ * DESIGN NOTES
+ * The timestamp accepts an ISO-8601 string or epoch milliseconds, with a custom
+ * error message: this is what an engineer integrating a new service sees when
+ * they get it wrong, and Zod's default ("expected date, received Date")
+ * explains nothing.
+ *
+ * Metadata is `.catchall(z.unknown())` so a monitored app can attach its own
+ * context without this schema needing a redeploy. Known fields are still
+ * typed, so the rollup worker and the evidence builder can rely on them.
+ *
+ * Ingestion is partial-success by design, which is why `ingestResultSchema`
+ * carries per-index rejection reasons rather than a single boolean.
  */
+
+import { z } from "zod";
 
 export const LOG_LEVELS = ["info", "warn", "error", "fatal"] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];

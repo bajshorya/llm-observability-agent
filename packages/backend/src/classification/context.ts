@@ -1,18 +1,60 @@
-import type { AnomalyTrigger, LogLevel } from "@obs/shared";
-import { isErrorLevel, normalizeErrorSignature } from "@obs/shared";
-
 /**
- * Building the classifier's evidence packet.
+ * Building the classifier's evidence packet — deciding what the model sees.
  *
+ * WHAT THIS FILE DOES
+ * Turns a window's raw data into the text sent to the model. It is a
+ * SUMMARISER, and it is PURE: same window in, same prompt out, no clock and no
+ * database. That purity is what makes the prompt reproducible, which is what
+ * makes a regression in classification quality attributable to the prompt
+ * rather than to whatever the sampler happened to pick that run.
+ *
+ * THE PROBLEM IT SOLVES
  * A five-minute window on a busy service is tens of thousands of log lines.
- * Sending them is impossible, and sending the first N is worse than useless —
+ * Sending them all is impossible. Sending the first N is worse than useless —
  * the first N lines of an incident are the healthy traffic that preceded it.
  *
- * So this file is a summariser, and it is pure: same window in, same prompt
- * out, no clock and no database. That is what makes the prompt reproducible,
- * which is what makes a regression in classification quality attributable to
- * the prompt rather than to whatever the sampler happened to pick that run.
+ * THE PACKET HAS FOUR VIEWS, EACH ANSWERING A DIFFERENT QUESTION
+ *
+ *   Window totals            HOW MUCH   requests, errors, error rate, p50/95/99
+ *   Per-minute timeline      WHEN       is it growing, steady, or already over?
+ *   Per-endpoint breakdown   WHERE      is one path slow, or all of them?
+ *   Sampled log lines        WHAT       what does the failure actually say?
+ *
+ * The last two were added after measurement, not intuition. Without the
+ * endpoint breakdown, "the service is slow" and "one background job is slow
+ * while users are fine" are identical evidence with opposite verdicts. Without
+ * the timeline, a burst that stopped after sixty seconds is indistinguishable
+ * from five minutes of steady failure — and a real classification was wrong for
+ * exactly that reason before it existed.
+ *
+ * THE BUDGET, AND WHY IT IS SMALL
+ * 8 signatures, 6 endpoints, 20 timeline minutes, 15 error lines, 8 healthy
+ * lines, 240 chars per message. The aggregates carry the signal; the raw lines
+ * exist to show the model what the failure looks like. Doubling these roughly
+ * doubles input tokens for a marginal gain in evidence.
+ *
+ * TWO SAMPLING RULES THAT MATTER
+ *
+ *   sampleEvenly    spreads across time, so an incident's ARC is visible —
+ *                   it starts, escalates, sometimes recovers, and a slice from
+ *                   either end shows one phase and hides the rest.
+ *
+ *   sampleDiverse   groups by normalised message shape and allocates the
+ *                   budget round-robin, rarest shape first. A line is
+ *                   informative roughly in proportion to how RARE its shape
+ *                   is: twenty copies of `GET /orders 200` say what one copy
+ *                   says, while a single `v1.4.2 starting up` explains the
+ *                   whole window. Uniform sampling dropped exactly that line
+ *                   once, leaving a benign window no reader could have judged
+ *                   correctly. That is why this function exists.
+ *
+ * COUPLING WORTH KNOWING
+ * The `Service:` and `Triggers fired:` lines are parsed by the stub provider,
+ * so their format is load-bearing beyond readability.
  */
+
+import type { AnomalyTrigger, LogLevel } from "@obs/shared";
+import { isErrorLevel, normalizeErrorSignature } from "@obs/shared";
 
 /**
  * Context budget. These are small on purpose — the aggregates carry the signal

@@ -1,3 +1,43 @@
+/**
+ * Tests for JSON extraction, the repair loop, and the stub provider.
+ *
+ * WHAT THIS FILE COVERS
+ * The whole path from a raw model response to a schema-valid object, with no
+ * network involved. A fake provider replays canned responses — including
+ * malformed ones and thrown errors — so every branch of the repair loop can be
+ * exercised deterministically.
+ *
+ * WHAT IT PINS DOWN
+ *
+ *   JSON extraction   fenced output, prose preamble, and the case that breaks
+ *                     the naive implementation: a brace inside a quoted error
+ *                     message. Truncated output must return null rather than a
+ *                     half-parse.
+ *
+ *   The repair loop   a schema-invalid response is re-prompted; the repair
+ *                     prompt must contain the model's OWN OUTPUT and name the
+ *                     offending field, because "that was invalid" without
+ *                     showing what "that" was produces a second guess rather
+ *                     than a correction.
+ *
+ *   Cost accounting   tokens summed across attempts; a failed run still
+ *                     records a row, because it still spent quota.
+ *
+ *   Transport errors  must NOT enter the repair loop. Re-prompting cannot fix
+ *                     a bad API key, so exactly one attempt is made.
+ *
+ *   The stub          produces schema-valid output with no network, and refuses
+ *                     agents it has no canned answer for rather than returning
+ *                     something plausible-looking.
+ *
+ * THEY RUN AGAINST THE REAL `llmConfig`, matching the detector tests: a change
+ * to the repair ceiling should fail here rather than quietly alter how much a
+ * failing model costs.
+ *
+ * NO DATABASE IS INVOLVED, because `generateStructured` takes an injected cost
+ * sink rather than importing one. The tests pass an array and inspect it.
+ */
+
 import { describe, expect, it } from "vitest";
 import { classificationSchema } from "@obs/shared";
 import { llmConfig } from "./config";
@@ -5,12 +45,6 @@ import { extractJsonObject, parseJsonObject } from "./json";
 import { createStubProvider } from "./providers/stub";
 import { generateStructured, LlmStructuredError, type LlmCallRecord } from "./structured";
 import { LlmProviderError, type LlmCompletion, type LlmProvider, type LlmRequest } from "./types";
-
-/**
- * These run against the **real** llmConfig, matching the detector tests: a
- * change to the repair ceiling should fail here rather than quietly alter how
- * much a failing model costs.
- */
 
 const VALID_RESPONSE = JSON.stringify({
   severity: "high",

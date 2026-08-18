@@ -1,14 +1,44 @@
+/**
+ * Google AI Studio (Gemini) — the primary provider.
+ *
+ * WHAT THIS FILE DOES
+ * Implements `LlmProvider` against Gemini's native `generateContent` endpoint:
+ * builds the request body, posts it via the shared HTTP helper, and parses the
+ * response into an `LlmCompletion`. Free tier, no credit card.
+ *
+ * WHY THE NATIVE API RATHER THAN GOOGLE'S OpenAI-COMPATIBLE SHIM
+ * Two things we want exist only on the native surface.
+ *
+ * 1. `responseMimeType: "application/json"` — JSON mode. This constrains
+ *    SYNTAX, not semantics: a model can still return perfectly valid JSON with
+ *    a severity of "quite bad", which is why Zod validation stays regardless.
+ *    What it removes is the most common failure — a correct object wrapped in a
+ *    sentence of prose.
+ *
+ * 2. `thinkingConfig: { thinkingBudget: 0 }` — and this one is not optional.
+ *    On 2.5-generation models, reasoning tokens are billed against
+ *    `maxOutputTokens`. Leave thinking enabled with an 800-token ceiling and
+ *    the model can spend the entire allowance reasoning and return an EMPTY
+ *    candidate with `finishReason: MAX_TOKENS`. The symptom looks exactly like
+ *    a parse bug, which is why `parseGeminiResponse` names the finish reason in
+ *    its error rather than just reporting "empty completion". Classification is
+ *    a short structured judgement over evidence already assembled — there is
+ *    nothing here worth thinking tokens.
+ *
+ * RESPONSE PARSING
+ * `parseGeminiResponse` is exported separately because response handling is
+ * where the edge cases live and it is worth being able to test without a
+ * network. It checks `promptFeedback.blockReason` first — a safety block
+ * returns no candidate at all, and reporting that as "empty completion" would
+ * send someone hunting for the wrong bug.
+ *
+ * QUOTA NOTE
+ * Free-tier quota is bucketed PER MODEL. When one model returns 429 for the
+ * day, `LLM_MODEL` pointing at a different one is the way through.
+ */
+
 import { postJson } from "../http";
 import { LlmProviderError, type LlmCompletion, type LlmProvider, type LlmRequest } from "../types";
-
-/**
- * Google AI Studio (Gemini) — the primary provider. Free tier, no card.
- *
- * Uses the native `generateContent` API rather than Google's OpenAI-compatible
- * shim, because two things we want are only on the native surface:
- * `responseMimeType: "application/json"`, and the ability to switch the 2.5
- * models' thinking off.
- */
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 

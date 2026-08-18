@@ -1,21 +1,56 @@
+/**
+ * Tier 1 — the three statistical detectors. The heart of the cheap tier.
+ *
+ * WHAT THIS FILE DOES
+ * Takes a summary of the window under test and a summary of the trailing
+ * baseline, and returns every trigger that fired. Three detectors, one entry
+ * point (`runDetectors`), no side effects.
+ *
+ * THESE ARE PURE FUNCTIONS, AND THAT IS THE POINT
+ * Statistics in, triggers out. No database, no clock, no I/O. This is the layer
+ * that can be *proven* correct with fixed inputs and known expected outputs —
+ * which is precisely what earns it the right to sit in front of an LLM and
+ * decide what the LLM never sees. Everything that touches the database lives in
+ * `engine.ts`; the split is deliberate and load-bearing.
+ *
+ * THE THREE DETECTORS
+ *
+ *   detectErrorRateSpike
+ *     Errors per minute in the window exceed mean + k·σ of the baseline.
+ *     Catches volume: something is failing much more than it usually does.
+ *
+ *   detectLatencyJump
+ *     Window p95 is a large multiple of the baseline p95. Note the baseline
+ *     uses the MEDIAN of per-minute p95s, not the mean — see `stats.ts` for
+ *     why that asymmetry exists.
+ *     Catches degradation with no errors at all: everything works, slowly.
+ *
+ *   detectNewErrorSignature
+ *     A normalised signature present in the window and absent from the entire
+ *     baseline hour. This is the only detector that can catch a brand-new
+ *     failure on its FIRST occurrence, before it has had time to become a
+ *     spike — and it depends entirely on signature normalisation working.
+ *     When several novel signatures appear at once the most frequent is
+ *     reported; the rest stay visible in the anomaly's log window.
+ *
+ * SHARED STRUCTURE
+ * Every detector checks its absolute floor FIRST — it is the cheapest test and
+ * rejects the noisiest case — then the relative threshold, then builds a
+ * trigger carrying the evidence that justified it. Returning `null` means "did
+ * not fire", and `runDetectors` filters those out.
+ *
+ * An incident commonly sets off more than one detector, and each carries
+ * independent evidence, so all firing triggers are kept rather than the first.
+ *
+ * ONE GUARD WORTH KNOWING: `safeZScore`
+ * A zero-variance baseline produces an infinite z-score, and
+ * `JSON.stringify(Infinity)` is `null` — which would silently corrupt a stored
+ * trigger. It is clamped to 999, which still reads as "far outside normal".
+ */
+
 import type { AnomalyTrigger } from "@obs/shared";
 import type { DetectionConfig } from "./config";
 import { mean, median, stdDev } from "./stats";
-
-/**
- * Tier 1: the three statistical detectors.
- *
- * These are **pure functions** — statistics in, triggers out. No database, no
- * clock, no I/O. That is deliberate: this is the layer that can be proven
- * correct with fixed inputs and known expected outputs, which is exactly what
- * makes it worth putting in front of an LLM. Everything that touches the
- * database lives in `engine.ts`.
- *
- * Every detector has both a *relative* threshold and an *absolute* floor. The
- * relative test is what makes it adaptive; the floor is what stops it firing on
- * statistically dramatic but practically meaningless changes — one extra error
- * on a quiet service, or latency moving from 2ms to 8ms.
- */
 
 export interface SignatureOccurrence {
   occurrences: number;

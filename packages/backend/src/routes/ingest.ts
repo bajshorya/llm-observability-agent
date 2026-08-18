@@ -1,3 +1,39 @@
+/**
+ * `POST /ingest` — the one write path into the system.
+ *
+ * WHAT THIS FILE DOES
+ * Accepts a batch of structured log entries, validates each one, computes an
+ * error signature where applicable, and inserts. That is the whole endpoint.
+ *
+ * WHY IT IS DELIBERATELY DUMB
+ * This sits in the hot path of every monitored service. No detection, no
+ * enrichment, no branching on content — the only things it is allowed to be are
+ * correct and fast. Everything analytical happens later, in a command, reading
+ * from the table this fills.
+ *
+ * PARTIAL SUCCESS, AND WHY
+ * The envelope is validated first (an array of 1..1000 unknowns); a malformed
+ * envelope is a 400. Then each entry is validated INDIVIDUALLY. One bad entry
+ * in a batch of 500 must not cost the other 499 — a monitored service should
+ * not lose a minute of telemetry because one log line had a malformed
+ * timestamp. Rejected entries are reported by index with a reason, capped at 20
+ * so the response stays bounded.
+ *
+ *   202 Accepted   everything went in
+ *   207 Multi-Status  some entries were rejected; the rest were stored
+ *
+ * THE ONE DELIBERATE EXCEPTION TO "JUST PERSIST"
+ * `normalizeErrorSignature` runs here, at write time, for warn/error/fatal
+ * entries. Strictly that is a hair more than validate-and-store, and it is
+ * justified: it is a pure O(1) string transform, and precomputing it turns the
+ * new-error-signature detector into an indexed lookup instead of a regex pass
+ * over millions of rows at query time. Doing it at read time would move real
+ * cost into the detection path to save nothing here.
+ *
+ * Inserts are chunked at 250 rows to stay well under SQLite's bound-parameter
+ * limit per statement.
+ */
+
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -9,13 +45,6 @@ import {
 } from "@obs/shared";
 import { db } from "../db/client";
 import { logs, type NewLogRow } from "../db/schema";
-
-/**
- * Ingestion is deliberately dumb: validate, then persist. No detection, no
- * enrichment, no branching on content. It sits in the hot path of every
- * monitored service, so the only things it is allowed to be are correct
- * and fast.
- */
 
 /** SQLite caps bound parameters per statement; chunk to stay well under it. */
 const INSERT_CHUNK_SIZE = 250;

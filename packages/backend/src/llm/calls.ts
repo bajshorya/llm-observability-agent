@@ -1,16 +1,42 @@
+/**
+ * Cost and latency accounting — the evidence behind the two-tier claim.
+ *
+ * WHAT THIS FILE DOES
+ * Two functions. `recordLlmCall` is the production sink passed to
+ * `generateStructured`; it writes one row to `llm_calls` per model invocation.
+ * `llmUsageSummary` aggregates those rows per agent, provider and model.
+ *
+ * WHY THIS TABLE EXISTS
+ * The project's central argument is that statistics handle the cheap 90% and
+ * the model is invoked only where it earns its cost. That is an empirical
+ * claim, and this is what makes it checkable rather than rhetorical: `pnpm
+ * classify --stats` reports how many anomalies were raised, how many reached a
+ * model, and what those calls cost.
+ *
+ * EVERY CALL IS RECORDED, INCLUDING THE FAILURES
+ * The failed ones matter most. A call that burned tokens across three repair
+ * attempts and still produced nothing spent real quota; a table recording only
+ * successes would hide exactly the spend worth knowing about, and would make a
+ * badly-behaving model look cheap.
+ *
+ * ATTRIBUTION
+ * Aggregation is per (agent, provider, model) because that is the granularity
+ * the claim is made at — "the classifier costs X" is a useful sentence, "the
+ * system costs X" is not, especially once the correlator and root-cause agents
+ * exist and have very different context sizes.
+ *
+ * WHAT IS DELIBERATELY ABSENT
+ * There is no currency column. Every provider in use is free, so a cost figure
+ * would read 0.00 and imply a precision that is not there. Tokens and latency
+ * are the honest units until a paid provider is added.
+ *
+ * Eval runs deliberately do NOT write here — see `eval/run.ts`.
+ */
+
 import { sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { llmCalls } from "../db/schema";
 import type { LlmCallSink } from "./structured";
-
-/**
- * Cost and latency accounting.
- *
- * Every invocation lands here, successful or not. The failed ones matter most:
- * a run that burned tokens on three repair attempts and still produced nothing
- * cost real quota, and a cost table that only records successes would hide
- * exactly the spend worth knowing about.
- */
 
 export const recordLlmCall: LlmCallSink = async (record) => {
   await db.insert(llmCalls).values({

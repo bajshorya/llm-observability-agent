@@ -1,15 +1,49 @@
 /**
- * The classifier's system prompt.
+ * The classifier's system prompt — the instructions half of every Tier 2 call.
  *
- * Kept in its own file, as a constant, for a reason that matters later: this
- * string is a version-able artefact. When classification quality changes, the
- * question is always "what did the prompt say at the time", and a prompt
- * assembled inline from three template literals cannot answer it.
+ * WHAT THIS FILE DOES
+ * Exports one string constant. `classify.ts` pairs it with the evidence packet
+ * from `context.ts`; together they are the complete prompt.
  *
- * The whole prompt is built around what statistics cannot do. Tier 1 already
- * knows the counts — restating them is not what the model is here for. It is
- * here for the judgement that requires reading: whether this shape is an
- * outage or a deploy, and how much it matters.
+ *     CLASSIFIER_SYSTEM_PROMPT   how to judge          ← this file, stable
+ *     rendered context           what to judge         ← per anomaly, varies
+ *
+ * WHY IT IS A CONSTANT IN ITS OWN FILE
+ * This string is a VERSIONABLE ARTEFACT. When classification quality changes,
+ * the question is always "what did the prompt say at the time" — and a prompt
+ * assembled inline from three template literals scattered across a function
+ * cannot answer that. Here, `git log` can.
+ *
+ * It is also stable across every call, which means it caches well on providers
+ * that support prompt caching.
+ *
+ * WHAT IT IS BUILT AROUND
+ * Everything statistics cannot do. Tier 1 already knows the counts; restating
+ * them is not what the model is for. It is here for the judgement that requires
+ * reading:
+ *
+ *   - Not every flagged window is an incident. A deploy restart, a batch job, a
+ *     load test and planned maintenance all produce an outage's statistical
+ *     shape. The numbers cannot separate them; the log text usually can.
+ *   - Weigh what the errors SAY, not only how many there are. A hundred 429s
+ *     from one client is rate limiting working correctly. Three null
+ *     dereferences on a checkout path is a bug shipping to users.
+ *   - Do not name a cause that is not visible in the evidence. A later stage
+ *     correlates commits, and a confident guess here corrupts its input.
+ *
+ * TWO DELIBERATE DETAILS
+ * Severity bands are defined explicitly rather than left to the model's
+ * intuition, because "high" means different things to different models.
+ *
+ * `affectedArea` is given an explicit escape hatch — "unknown" — because a
+ * model with no way to say "I cannot tell" will invent something. Whether it
+ * takes that option is measured directly by the grounding check in `eval/`.
+ *
+ * NOT TUNED AGAINST THE EVAL
+ * This prompt is byte-for-byte unchanged since before the first run against a
+ * real model, including through runs that scored badly. Fitting it to a
+ * six-case golden set would produce a prompt that scores well on that set and
+ * means nothing.
  */
 export const CLASSIFIER_SYSTEM_PROMPT = `
 You are the classification stage of an automated observability pipeline.

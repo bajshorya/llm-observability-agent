@@ -1,13 +1,40 @@
+/**
+ * The shared HTTP path: POST JSON, retry what is worth retrying, fail loudly on
+ * what is not.
+ *
+ * WHAT THIS FILE DOES
+ * Exports `postJson`, used by every network-backed provider. Kept out of the
+ * provider files so that adding a provider is a question of request and
+ * response SHAPE only, and so retry policy is decided once rather than three
+ * times slightly differently.
+ *
+ * THE RETRY POLICY, AND THE REASONING BEHIND THE SPLIT
+ *
+ *   RETRIED    408, 409, 425, 429, 500, 502, 503, 504, and any network or
+ *              timeout failure. A 429 in particular is the normal steady state
+ *              of a free tier — it means "wait", not "this anomaly cannot be
+ *              classified".
+ *
+ *   NOT RETRIED  400, 401, 403, 404. A malformed request, a bad key, or a
+ *              retired model identifier will fail identically forever.
+ *              Retrying only delays the error message that tells you WHICH of
+ *              those three it is, which is the only useful information in the
+ *              response.
+ *
+ * BACKOFF
+ * 500 ms doubling, unless the server sent `Retry-After` — which is honoured up
+ * to 30 seconds, because the server knows its own quota window and a constant
+ * does not.
+ *
+ * ERROR DETAIL IS PRESERVED
+ * The response body is read and included in the thrown error (truncated to 500
+ * chars). That body usually carries the actual reason — "quota exceeded for
+ * metric X, limit 20", "unknown model" — and discarding it in favour of a bare
+ * status code turns a diagnosable failure into a mystery.
+ */
+
 import { llmConfig } from "./config";
 import { LlmProviderError } from "./types";
-
-/**
- * The one HTTP path every network-backed provider shares: POST JSON, retry the
- * failures that are worth retrying, give up loudly on the ones that are not.
- *
- * Kept out of the provider files so that adding a provider is a question of
- * request and response shape only, and so retry policy is decided once.
- */
 
 /**
  * Retried: rate limits, request timeouts, and server-side faults. A 429 in

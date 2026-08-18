@@ -1,3 +1,31 @@
+/**
+ * Tests for the eval's scoring rules.
+ *
+ * WHAT THIS FILE COVERS
+ * `checkGrounding`, `severityDistance`, `scoreCase` and `summarise` — the pure
+ * rules that turn a model's answers into a scorecard. No provider is called;
+ * classifications are supplied directly as fixtures.
+ *
+ * THE TEST THAT MATTERS MOST
+ * "rejects a path that appears nowhere — the observed failure" encodes a real
+ * hallucination verbatim. A model answered `/orders/checkout path` for a service
+ * whose endpoints are `/orders`, `/orders/:id` and `/orders/:id/refund`. Verdict
+ * right, severity right, location invented. The grounding check exists because
+ * of that answer, and this test is what keeps it working.
+ *
+ * WHAT ELSE IS PINNED DOWN
+ *   - Declining ("unknown") counts as GROUNDED, not as a failure. Scoring it
+ *     otherwise would push the prompt toward confident guessing.
+ *   - Severity is scored within one band; more than one band apart fails.
+ *   - `summarise` reports dismissals and confirmations SEPARATELY. The test
+ *     constructs the exact pathology this guards against — a model right on
+ *     every incident and wrong on every benign case — and asserts the two
+ *     numbers stay distinguishable. Blended, that reads as mediocre; split, it
+ *     reads as "not judging, just defaulting".
+ *   - Failed calls are counted apart from wrong answers, so quota exhaustion
+ *     can never masquerade as bad judgement.
+ */
+
 import { describe, expect, it } from "vitest";
 import type { Classification } from "@obs/shared";
 import type { GoldenCase } from "./cases";
