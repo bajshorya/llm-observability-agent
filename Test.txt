@@ -1,8 +1,0 @@
-pnpm backend                                    # terminal 1
-pnpm generate backfill --minutes 120            # terminal 2
-pnpm detect                                     # → clean
-pnpm generate inject --scenario deploy-restart --minutes 5
-pnpm detect                                     # → ANOMALY, 2 triggers
-pnpm classify --preview <anomaly-id>            # ← the important one
-
-That last command prints the exact evidence packet sent to the model. Fifteen minutes here beats an hour of reading, because you see the abstraction and the concrete artifact together.
