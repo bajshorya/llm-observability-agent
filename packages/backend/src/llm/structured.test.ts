@@ -265,14 +265,68 @@ describe("stub provider", () => {
   });
 
   it("refuses agents it has no canned answer for", () => {
+    // `correlator` was this test's example until Phase 3 gave the stub a
+    // correlation baseline. `root_cause` is the remaining unimplemented agent.
     expect(() =>
       createStubProvider().complete({
         system: "s",
         user: "u",
-        agent: "correlator",
+        agent: "root_cause",
         temperature: 0,
         maxOutputTokens: 100,
       }),
     ).toThrow(LlmProviderError);
+  });
+
+  /**
+   * The correlation baseline. It is deliberately the naive heuristic — blame
+   * the newest commit — because that is what you would build without a model,
+   * and it is what the fixture history is constructed to defeat.
+   */
+  const CORRELATION_PACKET = [
+    "Candidate commits (2), searched X to Y, newest first:",
+    "",
+    "  8a38dbc5a4  2026-08-16 18:20Z  42m before  —  ci",
+    "    chore(ci): cache the pnpm store between runs",
+    "",
+    "  0c701a0bcc  2026-08-16 17:25Z  1h 37m before  —  ci",
+    "    feat(pricing): show the promotional total",
+  ].join("\n");
+
+  async function correlateWith(user: string) {
+    const completion = await createStubProvider().complete({
+      system: "s",
+      user,
+      agent: "correlator",
+      temperature: 0,
+      maxOutputTokens: 200,
+    });
+    return JSON.parse(completion.text) as {
+      suspectedCommitSha: string | null;
+      confidence: number;
+      reasoning: string;
+      changedFilesImplicated: string[];
+    };
+  }
+
+  it("blames the newest candidate commit", async () => {
+    const value = await correlateWith(CORRELATION_PACKET);
+    expect(value.suspectedCommitSha).toBe("8a38dbc5a4");
+  });
+
+  it("declines when the packet has no candidates", async () => {
+    const value = await correlateWith("Candidate commits: NONE.\n  Nothing landed.");
+    expect(value.suspectedCommitSha).toBeNull();
+  });
+
+  it("names no files, rather than guessing at them", async () => {
+    const value = await correlateWith(CORRELATION_PACKET);
+    expect(value.changedFilesImplicated).toEqual([]);
+  });
+
+  it("says in the reasoning that no model was involved", async () => {
+    const value = await correlateWith(CORRELATION_PACKET);
+    expect(value.reasoning.toLowerCase()).toContain("stub");
+    expect(value.reasoning.toLowerCase()).toContain("no model was called");
   });
 });
