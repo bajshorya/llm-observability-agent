@@ -18,13 +18,14 @@ the code win.
 **Part I — The system**
 [1. What it does](#1-what-it-does) ·
 [2. The pipeline](#2-the-pipeline) ·
-[3. Six principles](#3-six-principles-that-explain-everything-else) ·
+[3. Seven principles](#3-seven-principles-that-explain-everything-else) ·
 [4. The data model](#4-the-data-model)
 
 **Part II — How things actually flow**
 [5. Life of a log line](#5-life-of-a-log-line) ·
 [6. Life of a detection run](#6-life-of-a-detection-run) ·
-[7. Life of a classification](#7-life-of-a-classification)
+[7. Life of a classification](#7-life-of-a-classification) ·
+[7a. Life of a correlation](#7a-life-of-a-correlation)
 
 **Part III — Every file**
 [8. shared](#8-packagesshared) ·
@@ -112,19 +113,45 @@ where semantic understanding earns its price.
               │ real                          │ benign
               ▼                               ▼
         status stays open                status = dismissed
-        (Phase 3 will correlate)         (never correlated)
+              │                          (never correlated)
+              ▼
+  ┌──────────────────────────────────────────────────────────────┐
+  │  PHASE 3 — commit correlation         ~1 call per incident    │
+  │                                                               │
+  │  git log --numstat over the target repo, bounded:             │
+  │    48h back, 25 commits, --until = end of the window          │
+  │                                                               │
+  │  build packet: the incident + the candidates side by side     │
+  │    → provider.complete()                                      │
+  │    → Zod parse → GROUND against the candidate list            │
+  │         invented sha  → fail, write nothing                   │
+  │         invented file → drop it, report it                    │
+  │                                                               │
+  │  suspectedCommitSha (nullable) · confidence · reasoning       │
+  └──────────────────────────┬───────────────────────────────────┘
+                             ▼
+                    ┌─────────────────┐
+                    │  correlations   │  a null sha is still a row —
+                    │                 │  "declined" ≠ "never ran"
+                    └────────┬────────┘
+                             ▼
+                     status = correlated
                              │
                              ▼
                       ┌─────────────┐
                       │  llm_calls  │  tokens, latency, repairs, success
-                      └─────────────┘
+                      └─────────────┘         attributed per agent
 ```
 
 Two things flow alongside: the **generator** produces synthetic traffic (healthy
 baselines and six injectable scenarios), and the **eval harness** scores the
-classifier against captured golden cases.
+classifier against captured golden cases. There is no correlation eval yet.
 
-## 3. Six principles that explain everything else
+The funnel narrows twice. Tier 2 only sees what Tier 1 raised; correlation only
+sees what Tier 2 called real. Every dismissed window is a `git log` and a model
+call that never happened.
+
+## 3. Seven principles that explain everything else
 
 Almost every decision in the codebase follows from one of these.
 
@@ -158,10 +185,26 @@ failures collapse onto a stable key. This single idea powers two things: the
 new-signature detector, and the evidence sampler that shows the model one example
 per distinct message shape.
 
-**6 · State the trade-off; don't hide it.**
+**6 · Declining is a first-class answer.**
+Tier 2 can rule that a flagged window is not an incident; the correlator can
+rule that no commit explains it. Both are recorded rather than treated as
+absence — a declined correlation still writes a row, so "considered and
+declined" stays distinguishable from "never ran". This is why
+`suspectedCommitSha` is nullable, why `affectedArea` offers `"unknown"`, why
+half the generator's scenarios are benign, and why the eval scorecard reports
+benign and incident accuracy separately. A model with no way to decline invents
+something.
+
+**7 · State the trade-off; don't hide it.**
 Every design-decision table in the docs has a "costs" column, limitations are
 listed rather than omitted, and the eval publishes a negative result about the
 project's own central claim.
+
+**Where 5 and 6 pull against each other.** Normalisation is what makes detection
+work and what makes correlation harder: `reading '<str>'` matches nothing in a
+repository. The correlation packet prints the raw sample alongside the collapsed
+shape for exactly that reason — the same idea serving one stage and obstructing
+the next is worth knowing about before it surprises you.
 
 ## 4. The data model
 
@@ -296,6 +339,51 @@ and is retried next time, which is right for the most likely cause (a free-tier
 quota that resets in an hour).
 
 ---
+
+## 7a. Life of a correlation
+
+Phase 3, from an incident to a named commit or a considered refusal.
+
+```
+  1  loadPending            real incidents with no correlations row
+                            (is_real_incident = 1, id NOT IN correlations)
+                            — benign windows never reach here
+
+  2  collectCommits         git log --numstat --no-merges --no-renames
+                            --since (48h) --until (end of the window)
+                            → parseGitLog → Zod → CommitWindow
+
+  3  renderCorrelationContext   the incident and the candidates, two halves:
+                                severity, area, summary, detector evidence
+                                + raw error text, un-normalised
+                                + each commit: sha, age, subject, body, files
+
+  4  generateStructured     CORRELATOR_SYSTEM_PROMPT + packet
+                            → extract JSON → correlationSchema → repair ×2
+
+  5  groundCorrelation      the answer vs the candidates it was shown
+                            sha not in the list  → FAIL, nothing written
+                            10-char sha          → expand to the full 40
+                            file not in commit   → drop, report
+
+  6  persistCorrelation     insert the row (null sha included)
+                            update anomalies.status = 'correlated'
+```
+
+Three steps have no counterpart in Tier 2 and are where the design lives.
+
+**Step 2 is the second data source.** Everything before Phase 3 reads what the
+service did. This reads what the developers did, and the conclusion exists in
+neither input on its own.
+
+**Step 5 has no Tier 2 equivalent in the pipeline.** `eval/grounding.ts` asks
+the same question of `affectedArea`, but only inside the eval. Here it runs on
+every call, because a hallucinated sha would be persisted and inherited by Phase
+4 as established fact.
+
+**Step 6 runs even when the answer is null.** That row is what keeps "the
+correlator considered twelve candidates and declined" distinguishable from "the
+correlator never ran" — a distinction no status value carries.
 
 # Part III — Every file
 

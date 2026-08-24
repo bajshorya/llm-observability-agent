@@ -1,6 +1,6 @@
 # Start Here
 
-There are ~44,000 words of documentation in this repo for ~6,800 lines of code.
+There are ~50,000 words of documentation in this repo for ~8,100 lines of code.
 **Do not read them in order.** They are reference material — written to be
 searched when you have a specific question, the way you use a man page.
 
@@ -8,7 +8,7 @@ This file is the only one meant to be read front to back. Six minutes here and
 you will understand the shape of the system; everything else is lookup.
 
 **Want the full sequence?** Jump to [the reading order](#the-reading-order) —
-five steps, fifty-five minutes, and which document explains which concept.
+five steps, about an hour, and which document explains which concept.
 
 ---
 
@@ -16,8 +16,9 @@ five steps, fifty-five minutes, and which document explains which concept.
 
 A monitored app posts logs. Cheap statistics find anomalies for free. An LLM
 reads only the windows statistics flagged, and decides whether they actually
-matter. Later phases will correlate the survivors with git commits and propose a
-fix.
+matter. A third stage puts the survivors next to the source repository's history
+and asks which commit explains them, or whether none does. A later phase will
+propose a fix.
 
 ```
   app logs ──▶ POST /ingest ──▶ logs table
@@ -50,7 +51,7 @@ costs one model call, not one per detection run.
 
 ---
 
-## Five ideas that explain almost every decision
+## Six ideas that explain almost every decision
 
 If you know these, you can predict what most of the code looks like before
 opening it.
@@ -86,11 +87,28 @@ That single idea powers two things: the new-signature detector (otherwise every
 error looks novel), and the evidence sampler, which shows the model one example
 per distinct message shape instead of twenty copies of the same line.
 
+Normalisation is also the one place these ideas pull against each other. It is
+what makes detection work and what makes *correlation* harder — `reading
+'<str>'` matches nothing in a repository, so the correlation packet prints the
+raw sample alongside the collapsed shape.
+
+**6. Declining is a first-class answer.**
+Tier 2 can say a flagged window is not an incident. The correlator can say no
+commit explains it. Both are recorded rather than treated as absence — a
+declined correlation still writes a row, so "considered and declined" stays
+distinguishable from "never ran".
+
+This predicts a lot of the code: why `suspectedCommitSha` is nullable, why
+`affectedArea` offers `"unknown"`, why three of the six generator scenarios are
+benign, and why the eval scorecard reports benign and incident accuracy
+separately. A model with no way to decline invents something, and a system that
+can only ever answer is one whose answers mean less.
+
 ---
 
 ## The code map
 
-Faster than the docs for most questions. The whole system is ~6,800 lines.
+Faster than the docs for most questions. The whole system is ~8,100 lines.
 
 ```
 packages/shared/        The contract. Zod schemas + signature normalisation.
@@ -108,7 +126,7 @@ packages/backend/src/
                         structured.ts is the repair loop. providers/ is one file each.
   classification/       context.ts builds what the model sees · prompt.ts is the
                         prompt · classify.ts orchestrates
-  correlation/          Phase 3, partial. commits.ts parses git log (pure) ·
+  correlation/          Phase 3, runs end to end. commits.ts parses git log ·
                         git.ts spawns it · context.ts builds the packet ·
                         prompt.ts is the prompt · grounding.ts checks the answer
                         against the evidence · correlate.ts orchestrates
@@ -163,16 +181,16 @@ want the extended reasoning behind a particular decision.
 ## The reading order
 
 Nine documents, about three hours if you read them all. You don't need
-to. **Fifty-five minutes in this order and you understand the system**; the rest
+to. **An hour in this order and you understand the system**; the rest
 becomes lookup.
 
 | # | Read | Time | After it you can |
 |---|---|---|---|
 | 1 | This file, to the end | 6 min | Say what the system does and why it has two tiers |
-| 2 | `README.md`, top through *Classification (Tier 2)* | 8 min | Run it, and know what each command does |
-| 3 | **Run it** — commands below | 15 min | See the actual prompt the system sends |
-| 4 | `CODEBASE.md` Parts I–II (§1–7) | 10 min | Trace a log line from HTTP to a verdict |
-| 5 | `CODEBASE.md` Part III (§8–14) | 14 min | Say what every file in the repo does |
+| 2 | `README.md`, top through *Correlation (Phase 3)* | 10 min | Run it, and know what each command does |
+| 3 | **Run it** — commands below | 15 min | See the actual prompts the system sends |
+| 4 | `CODEBASE.md` Parts I–II (§1–7a) | 12 min | Trace a log line from HTTP to a named commit |
+| 5 | `CODEBASE.md` Part III (§8–14a) | 15 min | Say what every file in the repo does |
 
 Stop at 5. Everything after that is reference you consult when you have a
 question, not reading you owe.
@@ -214,7 +232,7 @@ interesting in that position and misleading in any other.
 
 | Concept | Start | Then |
 |---|---|---|
-| The two-tier funnel | the five ideas above | `PHASE-2` §1 |
+| The two-tier funnel | the six ideas above | `PHASE-2` §1 |
 | Ingestion and storage | `CODEBASE.md` §5 | `DOCUMENTATION` §7, §10 |
 | Detection statistics | `CODEBASE.md` §15 | `PHASE-1` §5–6, §13 |
 | **Agents** | `CODEBASE.md` §12 | `PHASE-2` §4–5 |
@@ -227,8 +245,8 @@ interesting in that position and misleading in any other.
 **On "agent" specifically**, since the word is overloaded everywhere: here it
 means *a role that calls an LLM with its own prompt and its own output schema*.
 Three are declared in `packages/shared/src/schemas/agents.ts` — `classifier`
-(built), `correlator` (Phase 3, its inputs built but the agent itself not) and
-`root_cause` (Phase 4). Separate prompts per
+(built), `correlator` (Phase 3, built and running but with no eval behind it)
+and `root_cause` (Phase 4, declared only). Separate prompts per
 role rather than one mega-prompt: cheaper, easier to evaluate, and each one's
 cost is attributable in the `llm_calls` table.
 
@@ -246,7 +264,7 @@ Known instances:
 
 - `PHASE-1` §16 says anomalies are never dismissed and stay `open`. Phase 2
   changed that — see `PHASE-2` §9 and §10.
-- `PHASE-1` says 27 unit tests, `PHASE-2` says 77. There are now 96.
+- `PHASE-1` says 27 unit tests, `PHASE-2` says 77. There are now 129.
 - `PHASE-2` §6 describes the log sample as drawn evenly across the window. It is
   now drawn by message shape — see `EVALS` §4, which explains why the original
   approach silently dropped the one line that explained a benign window.
@@ -279,3 +297,11 @@ benign half, and the gap between those two rows *is* the value the LLM tier adds
 Getting there took being wrong twice: two of the six labels were mine to fix, and
 one addition to the evidence packet made a case worse before a second one fixed
 it. That sequence is the more interesting half of the story.
+
+**Phase 3 has no such number yet, and the docs do not pretend otherwise.**
+`pnpm correlate` runs end to end, and in one observed run a capable model named
+the right commit with a stated mechanism while the naive baseline named the
+wrong one. That is n=1 on the positive half. Nothing has tested the `null` path
+— which, by idea 6 above, is the half that would actually distinguish the tier
+from its baseline. Until there is an eval, treat the correlation stage as built
+and unmeasured.
