@@ -1066,12 +1066,19 @@ Everything above measures **Tier 2 only**. The golden set scores a classifier:
 severity, verdict, and whether `affectedArea` is grounded in the evidence.
 
 Phase 3 has since added the inputs for commit correlation — a real fixture
-repository, a validated commit contract, the collector, the evidence packet and
-the prompt — but **no eval and no model run**. There is no correlation accuracy in this document because there
+repository, a validated commit contract, the collector, the evidence packet, the
+prompt and the orchestration — and `pnpm correlate` runs end to end against a
+real model. What it does **not** have is an eval. There is no correlation accuracy in this document because there
 is no measurement to report, and an assertion would be worse than a gap.
 
-When it exists it will need its own axes, and the split-scorecard lesson from §7
-applies directly: a model that always names the newest commit would score well
+One observed run is not a measurement. `gemini-3.5-flash` named the right commit
+with a stated mechanism and the naive baseline named the wrong one, which is
+encouraging and is n=1 on the positive half. Nothing has tested the `null` path
+— the half that actually distinguishes this tier from its baseline, exactly as
+the benign windows do for Tier 2.
+
+When the eval exists it will need its own axes, and the split-scorecard lesson
+from §7 applies directly: a model that always names the newest commit would score well
 on a set where the newest commit is always guilty. That is why the fixture
 history in `DOCUMENTATION-PHASE-3.md` §3 is built so the newest commit is
 innocent, three commits touch the same file, and two scenarios have `null` as

@@ -38,10 +38,11 @@ provider layer, the Tier 2 classifier, cost logging, and a golden-set eval
 harness.
 
 Phase 3 is **in progress**. Built: the target repository (`scripts/build-fixture-repo.sh`),
-the commit contract (`shared/src/schemas/commit.ts`), the collector, the evidence
-packet and the prompt (`backend/src/correlation/`). Not built: the agent, the
-CLI, golden cases. **No model has been run against it**, so the phase has no
-measured accuracy — see `DOCUMENTATION-PHASE-3.md` §11.
+the commit contract, the collector, the evidence packet, the prompt and the
+orchestration (`backend/src/correlation/`). `pnpm correlate` runs end to end.
+Not built: the correlation eval and its golden cases. **There is one observed
+run and no measurement**, so the phase has no accuracy figure — see
+`DOCUMENTATION-PHASE-3.md` §11–12.
 
 Phases 4 (root-cause agent) and 5 (dashboard) are not built — their tables and
 Zod contracts exist, no code.
@@ -53,12 +54,14 @@ on the benign half. See `DOCUMENTATION-EVALS.md` §10.
 ## Commands
 
 ```bash
-pnpm typecheck && pnpm test        # 115 tests, ~300ms, no network
+pnpm typecheck && pnpm test        # 129 tests, ~300ms, no network
 pnpm backend                       # ingestion API on :4000
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
 pnpm detect                        # Tier 1 — free, never calls a model
 pnpm classify --preview <id>       # the exact prompt, calls nothing
+pnpm correlate                     # Phase 3 — which commit, or none
+pnpm correlate --preview           # the exact prompt, calls nothing
 pnpm eval --provider gemini        # score the golden set
 
 bash scripts/build-fixture-repo.sh # the repo Phase 3 correlates against
@@ -79,7 +82,13 @@ own persistence. Keep it that way — it is why the tests need no fixtures.
 unvalidated data, model output included.
 
 **Tier 1 must never call a model.** `pnpm detect` is free and stays free.
-Classification is a separate command and `--classify` is opt-in.
+Classification and correlation are each their own command — every stage that
+spends quota is an explicit act.
+
+**The stub answers `classifier` and `correlator`, and must keep doing so.** It is
+what makes the whole pipeline run with no API key, and it is the baseline each
+tier is measured against: statistical judgement for Tier 2, "blame the newest
+commit" for Phase 3. Both are deliberately the thing the tier must beat.
 
 **State trade-offs; do not hide them.** Every design-decision table has a costs
 column, and limitations are listed rather than omitted.
@@ -135,5 +144,5 @@ commit would make the strongest `null` test in the set — the log names a real
 candidate and the answer is still `null`. But that line is *in the evidence
 packet*, so changing it invalidates all six golden cases and moves the capture
 window off the fixture's anchor. Current position is to leave it until the
-correlator exists and the improvement is measurable. See §12 of the Phase 3
+correlator exists and the improvement is measurable. See §13 of the Phase 3
 document.

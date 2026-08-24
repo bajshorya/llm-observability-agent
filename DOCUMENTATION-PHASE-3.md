@@ -7,8 +7,9 @@ this?**
 
 This document covers what has been built so far: the decision that was blocking
 the phase, the target repository, the commit contract, the collector, the
-evidence packet and the prompt. The agent itself is **not built**, and no model
-has been called. §11 is the honest inventory; §12 is the one decision still
+evidence packet, the prompt and the orchestration. The stage runs end to end.
+What is **not** built is the correlation eval — so there is one observed run and
+no measurement. §12 is the honest inventory; §13 is the one decision still
 outstanding.
 
 ---
@@ -138,7 +139,7 @@ the present for a live demo, at the cost of different shas.
 packet containing the answer would test nothing but a model's ability to copy a
 string. This is the correlation-stage equivalent of the classifier's grounding
 check, and it is a property of the generator that has to be actively preserved —
-see §12.
+see §13.
 
 ---
 
@@ -511,7 +512,112 @@ model ever sees.
 
 ---
 
-## 9. Files
+## 9. Orchestration — `correlate.ts`, `grounding.ts`, `pnpm correlate`
+
+The impure stage, plus the pure check that stands between a model's answer and
+the database.
+
+### What "uncorrelated" means
+
+A real incident with no `correlations` row: `is_real_incident = 1` and no
+matching row. Two things follow.
+
+**Benign windows are never correlated.** Tier 2 already dismissed them, and
+looking for the commit that caused a rolling restart is precisely the wasted
+call the two-tier design exists to avoid. The funnel narrows a second time here.
+
+**The absence of a row is the flag, not a status value.** `status` does move
+`open → correlated`, but keying the query off `status` would mean an anomaly a
+later phase moved on got silently re-correlated. Same rule, same reason, as
+Tier 2's `severity IS NULL`.
+
+### A null sha is still a row
+
+"No commit explains this" is a finding, and it costs a model call to reach.
+Writing it down means the next run does not pay for it again, and it makes "the
+correlator declined" visible in the data rather than indistinguishable from "the
+correlator never ran".
+
+`status` moves to `correlated` either way. The status records that the stage
+ran, not that it succeeded in blaming something.
+
+### Grounding: two failure kinds, treated differently
+
+`correlationSchema` guarantees the answer is well-**formed**. It cannot
+guarantee it is **true to the evidence**, because it has never seen the
+evidence. `"deadbeef"` is a valid sha and may correspond to no commit anywhere.
+
+This is `eval/grounding.ts`'s question asked of the correlator — with one
+difference that matters: this check runs in the **pipeline**, not only in the
+eval. A hallucinated sha would be written to `correlations` and inherited by
+Phase 4 as established fact.
+
+| Kind | Treatment | Why |
+|---|---|---|
+| **Invented sha** | fatal; no row written | The sha *is* the causal claim. Coercing it to `null` would record a hallucination as a considered "no commit explains this" — corrupting the one measurement the nullable field exists to make possible |
+| **Invented file** | dropped and reported | The sha still points at a real diff a human can open, so the answer stays checkable. The file list is supporting detail |
+
+An ambiguous prefix matching two candidates is treated as ungrounded rather than
+resolved to the first. Two commits sharing a 7-character prefix in a 25-commit
+window is vanishingly unlikely, and guessing between them would attribute an
+incident to a coin flip.
+
+Prefixes resolve **against the candidate list**, not by asking git. That means
+resolution cannot succeed for a commit the model was never shown: the lookup and
+the grounding check are the same operation.
+
+### A Phase 2 gap this stage exposed
+
+`affectedArea` was produced by the classifier, printed by `pnpm classify`, and
+scored by the eval — and **never written to the database**. It lived only as
+long as the process that generated it.
+
+Nothing upstream was wrong, which is why it went unnoticed: every Phase 2
+consumer used it inside the same call that produced it. Correlation is the first
+consumer that needs it *later*. The column was added and
+`persistClassification` now writes it.
+
+### The stub had to learn a second agent
+
+The stub provider threw for any agent but `classifier`, so `pnpm correlate`
+would have failed by default — breaking the property that the whole pipeline
+runs for someone with no API key.
+
+The baseline it implements is **blame the newest commit**: the thing you would
+actually build without a model, and the heuristic every team reaches for first.
+It is also exactly what the fixture is built to defeat, so the control fails on
+the positive case *and* would attribute the benign ones. The alternative — a
+stub that always declines — would score perfectly on every `null` case while
+doing no work, which flatters the baseline and makes the comparison useless.
+
+It names no files rather than guessing, and its reasoning says "no model was
+called" in as many words.
+
+### The CLI
+
+```
+pnpm correlate                    # up to 10 real incidents
+pnpm correlate --preview          # the exact prompt, calls nothing
+pnpm correlate --provider stub    # the naive baseline
+pnpm correlate --lookback 168     # widen the commit window for one run
+pnpm correlate --repo <path>      # a different checkout, without editing .env
+pnpm correlate --stats            # the funnel
+```
+
+Two output details that are not decoration. The **candidate count** is printed
+on every line, because declining from twelve candidates and declining from zero
+are completely different findings that otherwise read identically. **Dropped
+files** are printed as a warning rather than hidden, because a model inventing
+paths is a signal about that model worth seeing.
+
+`--preview` is a boolean and `--anomaly` picks the target, rather than
+`--preview <id>` as in Tier 2. `parseArgs` has no optional values — a string
+option always consumes the next argument, so `--preview` alone would fail rather
+than defaulting to the latest incident.
+
+---
+
+## 10. Files
 
 | File | Lines | Pure? | What |
 |---|---|---|---|
@@ -522,7 +628,11 @@ model ever sees.
 | `backend/src/correlation/commits.test.ts` | 195 | — | 15 cases, all plain strings |
 | `backend/src/correlation/prompt.ts` | 137 | constant | `CORRELATOR_SYSTEM_PROMPT` |
 | `backend/src/correlation/context.test.ts` | 196 | — | 13 cases, all literals |
+| `backend/src/correlation/grounding.ts` | 130 | **pure** | `groundCorrelation` — the answer checked against the evidence |
+| `backend/src/correlation/correlate.ts` | 372 | impure | orchestration, persistence, funnel, preview |
+| `backend/src/correlation/cli.ts` | 239 | — | `pnpm correlate` |
 | `backend/src/correlation/prompt.test.ts` | 92 | — | 6 cases guarding prompt discipline |
+| `backend/src/correlation/grounding.test.ts` | 162 | — | 11 cases, hallucinations included |
 | `scripts/build-fixture-repo.sh` | 503 | — | the target repository |
 
 Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
@@ -536,10 +646,11 @@ Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
 
 ---
 
-## 10. Verified behaviour
+## 11. Verified behaviour
 
-`pnpm typecheck` clean. **115 tests pass**, up from 81 — 15 for the parser, 13
-for the packet and 6 for prompt discipline, and none of them touch a filesystem.
+`pnpm typecheck` clean. **129 tests pass**, up from 81 — 15 for the parser, 13
+for the packet, 6 for prompt discipline, 11 for grounding and 4 for the stub's
+new baseline. None of them touch a filesystem or a database.
 
 The collector against the real fixture, for the golden window ending
 `2026-08-16T19:02Z`:
@@ -573,14 +684,46 @@ bash scripts/build-fixture-repo.sh
 git -C fixtures/orders-api log --format=%H | md5     # same every run
 ```
 
-**No model has been called yet.** There is no measured correlation accuracy in
-this document, and any claim about how well this phase works would be an
-assertion. §10 of `DOCUMENTATION-EVALS.md` is what that claim will have to look
-like when it exists.
+### One observed end-to-end run
+
+Against a scratch database: 120 minutes of baseline, the `new-error` scenario
+injected, `pnpm detect`, `pnpm classify`, `pnpm correlate`. The fixture was
+rebuilt with `--anchor now` so its history sat inside the lookback of a window
+generated today — which is what that flag is for.
+
+The **stub baseline** blamed the newest commit, a CI-configuration change that
+cannot throw in production. Wrong, by construction.
+
+**`gemini-3.5-flash`** named the bug commit at confidence 0.90, and its
+reasoning stated the mechanism rather than a correlation:
+
+> introduced `discounted_total` to order responses … This change likely passes a
+> null or uninitialized value to the recently extracted `formatPrice` helper
+> (introduced in `b103ced763`), which formats prices using `.toFixed()`.
+
+Note what it did with `b103ced763` — the same-file decoy. It cited it as
+*context* for the mechanism and did not blame it, which is the distinction the
+decoy exists to test.
+
+Both wrote a row, resolved the 10-character answer back to the full 40-character
+sha, and moved status to `correlated`. Re-running reported nothing to do. Cost
+was attributed per agent in `llm_calls`.
+
+### What that run is not
+
+**It is one case, on the positive half, with n=1.** It is an existence proof
+that the stage runs end to end and that a capable model can find the mechanism —
+not a measurement of how often it does.
+
+Nothing here tests the `null` path, which is the half that actually
+distinguishes this tier from the baseline, exactly as the benign windows do in
+Tier 2. There is still no correlation eval and no scorecard, so this document
+contains no accuracy figure. §10 of `DOCUMENTATION-EVALS.md` is what that claim
+will have to look like when it exists.
 
 ---
 
-## 11. What is not built
+## 12. What is not built
 
 | Piece | State |
 |---|---|
@@ -589,21 +732,19 @@ like when it exists.
 | Commit collector, pure + impure | ✅ Built |
 | `correlation/context.ts` — the evidence packet | ✅ Built |
 | `correlation/prompt.ts` — `CORRELATOR_SYSTEM_PROMPT` | ✅ Built |
-| `correlation/correlate.ts` — orchestration, persistence | Not built |
-| `pnpm correlate` CLI | Not built |
+| `correlation/correlate.ts` — orchestration, persistence | ✅ Built |
+| `pnpm correlate` CLI | ✅ Built |
 | Golden cases for correlation | Not built |
-| `correlations` table | Schema exists since Phase 0; nothing writes to it |
+| `correlations` table | ✅ Written by `correlate.ts` |
 
-The two things the agent will reuse already exist and already work:
-`generateStructured` with `correlationSchema`, and a provider layer that has been
-exercised against a real model.
-
-The status lifecycle already has the vocabulary too — `open → correlated →
-diagnosed` — and nothing has written `correlated` yet.
+What remains is the eval: golden cases for correlation, and a scorecard split
+across the four axes in `DOCUMENTATION-EVALS.md` §14. Until that exists the
+phase has one observed run and no measurement, which is the gap that matters
+most now.
 
 ---
 
-## 12. The open decision, blocking the golden cases
+## 13. The open decision, blocking the golden cases
 
 The `deploy-restart` scenario emits this log line, and it reaches the model
 inside the evidence packet:
@@ -640,7 +781,7 @@ right order anyway, since right now the improvement would be unmeasurable.
 
 ---
 
-## 13. Trade-offs
+## 14. Trade-offs
 
 | Decision | Cost accepted |
 |---|---|
@@ -653,7 +794,7 @@ right order anyway, since right now the improvement would be unmeasurable.
 
 ---
 
-## 14. Known limitations
+## 15. Known limitations
 
 - **No model has been run against this.** Everything above is plumbing and
   argument. The phase's actual claim — that an LLM can pick the guilty commit
@@ -672,7 +813,7 @@ right order anyway, since right now the improvement would be unmeasurable.
 
 ---
 
-## 15. What Phase 3 hands to Phase 4
+## 16. What Phase 3 hands to Phase 4
 
 Not yet anything — nothing writes `correlations` rows. When it does, Phase 4's
 root-cause agent gets the incident from Tier 2, the suspected commit from this

@@ -139,7 +139,7 @@ checkable, not just claimed.
 In every module, the code that *decides* has no database, clock, or network:
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `json.ts`,
 `grounding.ts`, `score.ts`. The code that *persists* is separate: `engine.ts`,
-`rollup.ts`, `classify.ts`, `calls.ts`. This is why 115 tests run in ~300 ms with
+`rollup.ts`, `classify.ts`, `calls.ts`. This is why 129 tests run in ~300 ms with
 no fixtures. **When hunting for logic, it is in a pure file.**
 
 **3 · Everything crossing a boundary is validated with Zod.**
@@ -203,6 +203,7 @@ rollup worker idempotent.
 | `detected_at`, `window_start`, `window_end`, `service` | Tier 1 |
 | `triggers` | Tier 1 — JSON array of which signals fired, with their evidence |
 | `severity`, `summary`, `is_real_incident` | Tier 2 — **NULL means unclassified** |
+| `affected_area` | Tier 2 — added in Phase 3. The classifier had produced this field since Phase 2 and nothing wrote it down; correlation is the first consumer that needs it later than the call that produced it |
 | `status` | `open \| correlated \| diagnosed \| dismissed \| resolved` |
 
 The NULL columns are the handoff contract between tiers. "Unclassified" is
@@ -600,10 +601,9 @@ that produced it.
 ## 14a. Backend — correlation (Phase 3, partial)
 
 The first stage that reads a second data source. Everything before it looks at
-what the service did; this puts that next to source history. The inputs are
-built — collector, evidence packet and prompt — but **the agent is not, and no
-model has been called**, so this stage has no measured accuracy. See
-`DOCUMENTATION-PHASE-3.md` §11.
+what the service did; this puts that next to source history. The stage runs end
+to end as of Phase 3; what does **not** exist is an eval, so there is one
+observed run and no measured accuracy. See `DOCUMENTATION-PHASE-3.md` §11–12.
 
 **`commits.ts`** (214 lines) — the `git log` parser, **pure**. Exports
 `GIT_LOG_FORMAT`, `GIT_LOG_ARGS` and `parseGitLog`. Text in, commits out: no
@@ -675,6 +675,38 @@ Confidence bands are spelled out for the same reason severity bands are.
 body containing the unit separator, a multi-paragraph body, a binary file, a
 path containing a tab, an empty commit, an empty body, and four failure modes.
 
+**`grounding.ts`** (130 lines) — the answer checked against the evidence,
+**pure**. `correlationSchema` guarantees the answer is well-formed; it cannot
+guarantee it is true to the evidence, because it has never seen the evidence.
+
+Two failure kinds, treated differently. An **invented sha is fatal** — the sha
+is the causal claim, and coercing it to null would record a hallucination as a
+considered "no commit explains this", corrupting the one measurement the
+nullable field exists to make possible. An **invented file is dropped and
+reported** — the sha still points at a real diff, so the answer stays checkable.
+
+Prefixes resolve against the candidate list rather than by asking git, so
+resolution cannot succeed for a commit the model was never shown: the lookup and
+the grounding check are the same operation. An ambiguous prefix is ungrounded
+rather than resolved to the first match.
+
+**`correlate.ts`** (372 lines) — orchestration. "Uncorrelated" is the absence of
+a `correlations` row, not a status value, for the same reason Tier 2 keys off
+`severity IS NULL`. Only real incidents are loaded — benign windows were already
+dismissed, and correlating a rolling restart is the wasted call the design
+exists to avoid.
+
+A null sha still writes a row: "no commit explains this" is a finding that cost
+a model call, and recording it keeps "declined" distinguishable from "never
+ran". Status moves `open → correlated` either way — it records that the stage
+ran, not that it blamed something.
+
+**`cli.ts`** (239 lines) — `pnpm correlate`, with `--limit`, `--anomaly`,
+`--provider`, `--preview` (boolean; `--anomaly` picks the target), `--lookback`,
+`--repo` and `--stats`. Prints the candidate count on every line, because
+declining from twelve candidates and declining from zero read identically
+without it, and surfaces dropped files rather than hiding them.
+
 **`context.test.ts`** (196 lines) — 13 cases. Checks that the raw error text
 survives, that "no candidates" is explicit, and that every budget cap prints
 what it elided rather than silently dropping it.
@@ -686,6 +718,9 @@ rule living only in a document survives as long as the next person who has not
 read it, so this fails CI instead. Checks that no fixture identifier appears, no
 sha appears, and no worked example is offered. Verified by inserting a leak
 deliberately and watching three guards fire.
+
+**`grounding.test.ts`** (162 lines) — 11 cases, hallucinations included. The
+asymmetry between the two failure kinds is the thing under test.
 
 **`scripts/build-fixture-repo.sh`** (repo root, 503 lines) — builds
 `fixtures/orders-api`, the repository correlation runs against: 12 real commits
@@ -769,7 +804,8 @@ Environment (`.env`, all optional — defaults work):
 
 Code-level tunables live in `detection/config.ts` (thresholds),
 `llm/config.ts` (temperature, retries, models), `classification/context.ts`
-(`contextBudget`) and `correlation/git.ts` (`defaultLookback`).
+(`contextBudget`), `correlation/context.ts` (`correlationBudget`) and
+`correlation/git.ts` (`defaultLookback`).
 
 ## 17. Commands
 
@@ -777,7 +813,7 @@ Code-level tunables live in `detection/config.ts` (thresholds),
 pnpm install && pnpm db:push        # setup
 pnpm backend                        # ingestion API on :4000
 pnpm typecheck                      # strict TS, all packages
-pnpm test                           # 115 unit tests, ~300ms, no network
+pnpm test                           # 129 unit tests, ~300ms, no network
 
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -794,6 +830,11 @@ pnpm classify --stats               # funnel + cost
 
 pnpm eval                           # score the golden set
 pnpm eval --provider stub           # statistical baseline
+pnpm correlate                      # Phase 3 — which commit, or none
+pnpm correlate --preview            # the exact prompt, no call
+pnpm correlate --provider stub      # the naive "blame the newest" baseline
+pnpm correlate --stats              # the correlation funnel
+
 pnpm eval --show <name>             # a case's evidence packet
 
 bash scripts/build-fixture-repo.sh  # the repo Phase 3 correlates against
@@ -802,7 +843,7 @@ bash scripts/build-fixture-repo.sh --anchor now   # for a live demo; different s
 
 ## 18. Testing strategy
 
-Eight test files, 115 tests, ~300 ms, no network or database.
+Nine test files, 129 tests, ~300 ms, no network or database.
 
 | File | Covers |
 |---|---|
@@ -814,6 +855,7 @@ Eight test files, 115 tests, ~300 ms, no network or database.
 | `correlation/commits.test.ts` | `git log` parsing: separators in bodies, binary files, tabs in paths, four failure modes |
 | `correlation/context.test.ts` | Correlation packet: raw error text, explicit "no candidates", budget elisions, age formatting |
 | `correlation/prompt.test.ts` | Prompt discipline: no fixture identifiers, no shas, no worked examples |
+| `correlation/grounding.test.ts` | Sha resolution, invented shas rejected, invented files dropped |
 
 Two conventions worth knowing. Tests run against the **real config objects**, not
 fixtures, so changing a threshold fails a test rather than silently altering
@@ -876,9 +918,11 @@ why `pnpm classify` caps a run at 10 anomalies. Quota is bucketed per model, so
 provider in use is free and a cost column reading `0.00` would imply precision
 that isn't there.
 
-**Correlation is unproven.** The collector works and is tested, but no model has
-been asked to pick a commit. The phase's actual claim — that an LLM can identify
-the guilty commit among six plausible ones — has no number behind it yet.
+**Correlation is unmeasured.** The stage runs end to end and one observed run
+had `gemini-3.5-flash` name the right commit with a stated mechanism, while the
+naive baseline named the wrong one. That is n=1 on the positive half. There is
+no correlation eval, nothing tests the `null` path — the half that actually
+distinguishes the tier from the baseline — and so no accuracy figure exists.
 
 **The fixture history is authored by us**, so a critic can fairly say the
 correlation task was made findable. The decoys and the two `null` cases are what
@@ -897,7 +941,7 @@ and an add.
 
 | Phase | Scope | State |
 |---|---|---|
-| 3 | Commit correlation | **Partial** — target repo, contract, collector, evidence packet and prompt built; agent and CLI are not |
+| 3 | Commit correlation | **Runs end to end** — target repo, contract, collector, packet, prompt, agent and CLI all built. No eval, so no measured accuracy |
 | 4 | Root-cause + fix agent, human-gated | Schema and contract exist; no code |
 | 5 | Next.js dashboard with reasoning trace | Not started |
 
@@ -909,10 +953,10 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-What remains in Phase 3, in order: orchestration writing `correlations` rows and
-moving status to `correlated`, a `pnpm correlate` CLI, and golden cases.
+What remains in Phase 3 is the eval: golden cases for correlation and a
+scorecard split across the four axes in `DOCUMENTATION-EVALS.md` §14.
 
 One decision precedes the golden cases — whether `deploy-restart`'s fabricated
 deploy sha becomes a real one. It would make the strongest `null` test in the
 set, and it invalidates all six existing cases.
-`DOCUMENTATION-PHASE-3.md` §12.
+`DOCUMENTATION-PHASE-3.md` §13.
