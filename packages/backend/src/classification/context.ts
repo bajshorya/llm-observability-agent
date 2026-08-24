@@ -258,7 +258,12 @@ export function sampleDiverse<T>(
   return ordered.flatMap((group, i) => sampleEvenly(group, take[i] ?? 0));
 }
 
-function describeTrigger(trigger: AnomalyTrigger): string {
+/**
+ * One trigger as a sentence. Exported because the correlation packet renders
+ * the same triggers: the detector evidence is what says WHAT broke, and a
+ * second phrasing of it would be a second thing to keep in step for no gain.
+ */
+export function describeTrigger(trigger: AnomalyTrigger): string {
   switch (trigger.kind) {
     case "error_rate_spike":
       return (
