@@ -15,6 +15,9 @@
  *                         discriminated union of trigger kinds.
  *   - `schemas/agents`    what the LLM agents must return. Every model response
  *                         is parsed into one of these before use.
+ *   - `schemas/commit`    source history as the correlation agent sees it —
+ *                         the second data source, and the only one that does
+ *                         not come from the running service.
  *   - `signature`         error-message normalisation, used at ingest time by
  *                         the backend and (indirectly) by the evidence sampler.
  *
@@ -26,4 +29,5 @@
 export * from "./schemas/log";
 export * from "./schemas/anomaly";
 export * from "./schemas/agents";
+export * from "./schemas/commit";
 export * from "./signature";
