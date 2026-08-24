@@ -37,6 +37,13 @@
  * the two by guessing. That is not hypothetical; it was observed. Two indexed
  * queries are worth the correctness.
  *
+ * A FIELD THAT WAS BEING THROWN AWAY
+ * `affectedArea` is persisted as of Phase 3. The classifier had produced it
+ * since this tier was built — the CLI printed it, the eval scored it — but
+ * nothing wrote it to the row, so it lived only as long as the process that
+ * generated it. Correlation is the first consumer that needs it later than the
+ * call that produced it, which is how the gap surfaced.
+ *
  * THE STATUS TRANSITION THIS FILE OWNS
  * A benign verdict sets status to `dismissed`. That is the entire point of the
  * tier — statistics flagged it, reading it said otherwise — and without it the
@@ -414,6 +421,7 @@ async function persistClassification(
       severity: classification.severity,
       summary: classification.summary,
       isRealIncident: classification.isRealIncident,
+      affectedArea: classification.affectedArea,
       status: classification.isRealIncident ? "open" : "dismissed",
     })
     .where(eq(anomalies.id, anomalyId));

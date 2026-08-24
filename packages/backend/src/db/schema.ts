@@ -130,6 +130,16 @@ export const anomalies = sqliteTable(
     severity: text("severity").$type<Severity>(),
     summary: text("summary"),
     isRealIncident: integer("is_real_incident", { mode: "boolean" }),
+    /**
+     * The endpoint, dependency or subsystem Tier 2 implicated, or "unknown"
+     * when the evidence identified none.
+     *
+     * Added in Phase 3. The classifier had produced this field since Phase 2 —
+     * the CLI printed it and the eval scored it — but nothing wrote it down,
+     * so it existed only for the length of one process. Correlation is the
+     * first consumer that needs it later than the call that produced it.
+     */
+    affectedArea: text("affected_area"),
 
     status: text("status").$type<AnomalyStatus>().notNull().default("open"),
     createdAt: createdAt(),
