@@ -75,6 +75,12 @@
  * prompt is where "recent is not the same as guilty" belongs; the packet's job
  * is to present what is true in the form it is true in.
  *
+ * COUPLING WORTH KNOWING
+ * The stub provider parses the FIRST candidate line out of this packet to
+ * implement its "blame the newest commit" baseline, so the shape of that line —
+ * two spaces, the short sha, two spaces, an ISO date — is load-bearing beyond
+ * readability. `llm/providers/stub.ts` says so too.
+ *
  * NO DIFF CONTENT
  * Subjects, bodies and per-file line counts, not hunks. Hunks are the obvious
  * next increment and would roughly triple the packet. Worth doing only once
