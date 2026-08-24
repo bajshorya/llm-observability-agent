@@ -38,9 +38,14 @@ later one wins — `START-HERE.md` lists the known cases.
 | **0** | Scaffold, schema, log generator, ingestion | ✅ Done |
 | **1** | Rollup worker + Tier 1 statistical detectors (no LLM) | ✅ Done |
 | **2** | Tier 2 LLM classifier, provider layer, cost logging | ✅ Done |
-| 3 | GitHub commit correlation agent | Next |
+| 3 | Commit correlation agent | 🚧 In progress |
 | 4 | Root-cause + fix agent (human-gated) | |
 | 5 | Next.js dashboard with reasoning trace | |
+
+Phase 3 so far: the target repository, the commit contract and the collector.
+The evidence packet, the prompt and the agent are not built, and **no model has
+been asked to pick a commit yet** — so the phase has no measured accuracy.
+`DOCUMENTATION-PHASE-3.md` §9 is the honest inventory.
 
 ---
 
@@ -102,7 +107,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 81 unit tests; 27 of them over the detectors and stats
+pnpm test                   # 96 unit tests; 27 of them over the detectors and stats
 ```
 
 A firing window looks like this:
@@ -337,7 +342,7 @@ claim "the statistical layer works on its own" honest and checkable.
 
 ```bash
 pnpm typecheck            # strict TS across all packages
-pnpm test                 # 81 unit tests, no network required
+pnpm test                 # 96 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
   WHERE error_signature IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;"
