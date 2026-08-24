@@ -1066,8 +1066,8 @@ Everything above measures **Tier 2 only**. The golden set scores a classifier:
 severity, verdict, and whether `affectedArea` is grounded in the evidence.
 
 Phase 3 has since added the inputs for commit correlation — a real fixture
-repository, a validated commit contract, and the collector — but **no eval and
-no model run**. There is no correlation accuracy in this document because there
+repository, a validated commit contract, the collector and the evidence packet —
+but **no eval and no model run**. There is no correlation accuracy in this document because there
 is no measurement to report, and an assertion would be worse than a gap.
 
 When it exists it will need its own axes, and the split-scorecard lesson from §7

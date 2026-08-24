@@ -40,7 +40,7 @@ fix.
                                             ▼
         TIER 3  commit correlation                 in progress
         which commit did this, or none?
-        collector built · packet, prompt and agent not
+        collector and packet built · prompt and agent not
 ```
 
 The funnel is the whole point. Tier 1 is free and can run every 30 seconds.
@@ -65,7 +65,7 @@ why the default provider is an offline stub.
 In every module, the logic that decides things has no database, clock, or I/O —
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `grounding.ts`. The
 code that touches the database is separate — `engine.ts`, `rollup.ts`,
-`classify.ts`, `calls.ts`. That split is why 96 tests run in 300ms with no
+`classify.ts`, `calls.ts`. That split is why 109 tests run in 300ms with no
 fixtures — including a `git log` parser tested entirely on strings, with no
 repository anywhere near it. **When you are hunting for logic, it is in a pure file.**
 
@@ -109,7 +109,7 @@ packages/backend/src/
   classification/       context.ts builds what the model sees · prompt.ts is the
                         prompt · classify.ts orchestrates
   correlation/          Phase 3, partial. commits.ts parses git log (pure) ·
-                        git.ts spawns it and bounds the lookback
+                        git.ts spawns it · context.ts builds the packet (pure)
   eval/                 Golden set: cases/, grounding.ts, score.ts
 
 scripts/                capture-cases.sh rebuilds the golden set ·
@@ -148,9 +148,10 @@ want the extended reasoning behind a particular decision.
 | Is the classifier any good? | `EVALS` §8–10 |
 | Which commit caused it? | `PHASE-3` §1, §5 |
 | Where do the fixture commits come from? | `PHASE-3` §3 |
+| What does the correlator actually see? | `PHASE-3` §7 |
 | Why is `suspectedCommitSha` nullable? | `PHASE-3` §4 |
 | What is known to be broken? | `CODEBASE.md` §19 — consolidated |
-| What is next? | `PHASE-3` §9–10 |
+| What is next? | `PHASE-3` §10–11 |
 
 (`PHASE-1` = `DOCUMENTATION-PHASE-1.md`, and so on.)
 
@@ -215,7 +216,7 @@ interesting in that position and misleading in any other.
 | Structured output and the repair loop | `CODEBASE.md` §12 | `PHASE-2` §5 |
 | The evidence packet | `CODEBASE.md` §13 | `EVALS` §9 |
 | **Evals** | `CODEBASE.md` §14 | `EVALS` — whole document |
-| **Commit correlation** | `CODEBASE.md` §14a | `PHASE-3` §3–6 |
+| **Commit correlation** | `CODEBASE.md` §14a | `PHASE-3` §3–7 |
 | The data model | `CODEBASE.md` §4 | `DOCUMENTATION` §9 |
 
 **On "agent" specifically**, since the word is overloaded everywhere: here it

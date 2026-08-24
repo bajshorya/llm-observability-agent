@@ -6,9 +6,10 @@ and status still `open`. Phase 3 asks the next question — **which commit did
 this?**
 
 This document covers what has been built so far: the decision that was blocking
-the phase, the target repository, the commit contract, and the collector. The
-evidence packet, the prompt and the agent itself are **not built**. §9 says what
-is missing and §10 says what has to be decided before it can be.
+the phase, the target repository, the commit contract, the collector and the
+evidence packet. The prompt and the agent itself are **not built**, and no model
+has been called. §10 is the honest inventory; §11 is the one decision still
+outstanding.
 
 ---
 
@@ -137,7 +138,7 @@ the present for a live demo, at the cost of different shas.
 packet containing the answer would test nothing but a model's ability to copy a
 string. This is the correlation-stage equivalent of the classifier's grounding
 check, and it is a property of the generator that has to be actively preserved —
-see §10.
+see §11.
 
 ---
 
@@ -290,14 +291,140 @@ system to the test rather than the other way round.
 
 ---
 
-## 7. Files
+## 7. The evidence packet — `correlation/context.ts`
+
+Pure, like its Tier 2 counterpart: same input, same text out, no clock and no
+database. Every date it renders comes from the input, which is why "1h 37m
+before the window" is reproducible rather than a function of when it ran.
+
+### Two halves, one seam
+
+This is the first packet in the system built from two sources, and it is laid
+out to make that visible:
+
+| Half | Carries |
+|---|---|
+| **The incident** | service, window, severity, affected area, the classifier's summary, and the detector evidence |
+| **The candidates** | each commit's sha, timestamp, age relative to the window, author, subject, body and files |
+
+The classifier's verdict is included so the correlator does not silently
+re-litigate whether this is an incident at all. That question was answered
+upstream, and a stage that quietly re-answers it is a stage whose output cannot
+be attributed.
+
+### Normalisation helps Tier 1 and hurts this tier
+
+`describeTrigger` prints the **normalised** signature, because that is what the
+new-signature detector actually compared against the baseline. Normalisation is
+what makes that detector work — it collapses `reading 'toFixed'` and
+`reading 'toUpperCase'` into one shape, so a thousand ids do not look like a
+thousand novel errors.
+
+For correlation it removes the one token that points at code:
+
+```
+reading '<str>'      matches nothing in a repository
+reading 'toFixed'    matches a file about formatting money
+```
+
+So the packet prints the raw sample **alongside** the collapsed shape rather
+than instead of it. The shape says how the detector saw it; the sample says what
+actually happened.
+
+This packet was written without the raw line, and its own test caught it. Worth
+recording, because the failure was invisible in the classifier — Tier 2 gets the
+raw text elsewhere, in its signature table and log sample, so nothing upstream
+was wrong. The loss only appears at the stage that needs to match a string
+against source code.
+
+### The budget
+
+25 commits, 12 files per commit, 400 chars of body, 300 of raw error text, 200
+of subject. Commits are the expensive axis; the collector already caps them at
+25, and this cap exists so that widening `--lookback` cannot silently produce a
+prompt nobody sized.
+
+The body budget is generous relative to Tier 2's 240-char log lines, and the
+rendered fixture packet shows why. The two most confusable candidates —
+`0c701a0` and `0c4abb1` — touch the *same two files* with similar subjects. What
+separates them is entirely in the bodies: "adds discounted_total" versus "three
+call sites were formatting money inline". Cut the body and the packet stops
+containing the answer.
+
+### Three decisions worth arguing with
+
+**Short shas are rendered, not full ones.** A model copying 10 hex characters
+has fewer chances to typo than one copying 40, and `correlationSchema` accepts
+7–40 precisely so an abbreviation is not rejected. Orchestration will resolve
+the answer back against the candidate list, which also catches an invented sha —
+the correlation-stage equivalent of `eval/grounding.ts`.
+
+**Commits are rendered newest first.** That is the order git prints them and the
+order a developer reads them. It is also, uncomfortably, the order that
+encourages the recency heuristic the fixture history exists to defeat. The
+alternative — shuffling, or oldest-first — would be arranging the evidence to
+influence the answer, which is a worse failure than the one it prevents. The
+prompt is where "recent is not the same as guilty" belongs.
+
+**"No candidates" is stated, not omitted.** An absent section reads as *not
+provided*; the model needs the difference between "we searched and found
+nothing" and "we did not look", because only one of those makes `null` correct
+rather than a guess. The same reasoning applies to a commit that touched no
+files, which is printed as such.
+
+### What it looks like
+
+Abridged, from a real render against the fixture:
+
+```
+Service: orders-api
+Window: 2026-08-16T18:57:00.000Z to 2026-08-16T19:02:00.000Z (5 min)
+Severity: critical
+Affected area: GET /orders and GET /orders/:id order read paths
+
+Already established by the classification stage:
+  A novel TypeError is returning 500s on order read paths; a code change is
+  failing in production.
+
+What the statistical detectors found:
+- new_error_signature: "TypeError: Cannot read properties of null (reading
+  '<str>')" occurred 109 times and appears nowhere in the baseline hour
+    raw example: TypeError: Cannot read properties of null (reading 'toFixed')
+- error_rate_spike: 111 errors in the window against a baseline of 0.53/min
+  (sd 0.79, z=27.38)
+
+Candidate commits (6), searched 2026-08-14T19:02:00.000Z to
+2026-08-16T19:02:00.000Z, newest first:
+
+  8a38dbc5a4  2026-08-16 18:20Z  42m before  —  orders-api ci
+    chore(ci): cache the pnpm store between runs
+      Install was 90 seconds of every run. Cache key is the lockfile hash.
+    files (1):
+      .github/workflows/ci.yml  +13/-0
+
+  0c701a0bcc  2026-08-16 17:25Z  1h 37m before  —  orders-api ci
+    feat(pricing): show the promotional total on order responses
+      Adds discounted_total to every order response so the storefront can
+      strike through the original price without a second call.
+    files (2):
+      src/lib/pricing.js  +7/-1
+      src/routes/orders.js  +2/-1
+
+  …
+```
+
+---
+
+## 8. Files
 
 | File | Lines | Pure? | What |
 |---|---|---|---|
 | `shared/src/schemas/commit.ts` | 93 | contract | `candidateCommitSchema`, `changedFileSchema`, `commitWindowSchema` |
 | `backend/src/correlation/commits.ts` | 214 | **pure** | `GIT_LOG_FORMAT`, `GIT_LOG_ARGS`, `parseGitLog` |
 | `backend/src/correlation/git.ts` | 145 | impure | `defaultLookback`, `resolveTargetRepo`, `collectCommits` |
+| `backend/src/correlation/context.ts` | 280 | **pure** | `correlationBudget`, `describeAge`, `renderCorrelationContext` |
 | `backend/src/correlation/commits.test.ts` | 195 | — | 15 cases, all plain strings |
+| `backend/src/correlation/context.test.ts` | 196 | — | 13 cases, all literals |
 | `scripts/build-fixture-repo.sh` | 503 | — | the target repository |
 
 Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
@@ -311,10 +438,10 @@ Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
 
 ---
 
-## 8. Verified behaviour
+## 9. Verified behaviour
 
-`pnpm typecheck` clean. **96 tests pass**, up from 81 — the 15 new ones are the
-parser's, and none of them touch a filesystem.
+`pnpm typecheck` clean. **109 tests pass**, up from 81 — 15 for the parser and
+13 for the packet, and none of them touch a filesystem.
 
 The collector against the real fixture, for the golden window ending
 `2026-08-16T19:02Z`:
@@ -355,14 +482,14 @@ like when it exists.
 
 ---
 
-## 9. What is not built
+## 10. What is not built
 
 | Piece | State |
 |---|---|
 | Target repository | ✅ Built |
 | `candidateCommitSchema` etc. | ✅ Built |
 | Commit collector, pure + impure | ✅ Built |
-| `correlation/context.ts` — the evidence packet | Not built |
+| `correlation/context.ts` — the evidence packet | ✅ Built |
 | `correlation/prompt.ts` — `CORRELATOR_SYSTEM_PROMPT` | Not built |
 | `correlation/correlate.ts` — orchestration, persistence | Not built |
 | `pnpm correlate` CLI | Not built |
@@ -378,7 +505,7 @@ diagnosed` — and nothing has written `correlated` yet.
 
 ---
 
-## 10. The open decision, blocking the evidence packet
+## 11. The open decision, blocking the golden cases
 
 The `deploy-restart` scenario emits this log line, and it reaches the model
 inside the evidence packet:
@@ -396,8 +523,13 @@ model can look up in its candidate list, and the correct answer would *still* be
 innocent. That is a much harder question than one where no candidate is
 mentioned at all.
 
-**The case against changing it now:** that line is *in the evidence packet*, so
-changing it invalidates all six golden cases — the standing gotcha in
+This decision does **not** block the packet or the prompt — an earlier draft of
+this document said it did, which was wrong. The correlation packet is a new
+artefact and does not depend on that log line. What it blocks is *capture*:
+changing the line invalidates cases, so it wants settling before any are stored.
+
+**The case against changing it now:** that line is *in the classifier's evidence
+packet*, so changing it invalidates all six existing golden cases — the standing gotcha in
 `CLAUDE.md`. It needs a full `bash scripts/capture-cases.sh` rebuild plus Gemini
 quota, and recapturing shifts the window to the capture date, which moves it off
 the anchor the fixture was just aligned to (§3).
@@ -410,7 +542,7 @@ right order anyway, since right now the improvement would be unmeasurable.
 
 ---
 
-## 11. Trade-offs
+## 12. Trade-offs
 
 | Decision | Cost accepted |
 |---|---|
@@ -423,7 +555,7 @@ right order anyway, since right now the improvement would be unmeasurable.
 
 ---
 
-## 12. Known limitations
+## 13. Known limitations
 
 - **No model has been run against this.** Everything above is plumbing and
   argument. The phase's actual claim — that an LLM can pick the guilty commit
@@ -442,7 +574,7 @@ right order anyway, since right now the improvement would be unmeasurable.
 
 ---
 
-## 13. What Phase 3 hands to Phase 4
+## 14. What Phase 3 hands to Phase 4
 
 Not yet anything — nothing writes `correlations` rows. When it does, Phase 4's
 root-cause agent gets the incident from Tier 2, the suspected commit from this

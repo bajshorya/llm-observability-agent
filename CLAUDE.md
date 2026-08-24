@@ -38,10 +38,10 @@ provider layer, the Tier 2 classifier, cost logging, and a golden-set eval
 harness.
 
 Phase 3 is **in progress**. Built: the target repository (`scripts/build-fixture-repo.sh`),
-the commit contract (`shared/src/schemas/commit.ts`), and the collector
-(`backend/src/correlation/`). Not built: the evidence packet, the prompt, the
-agent, the CLI, golden cases. **No model has been run against it**, so the
-phase has no measured accuracy — see `DOCUMENTATION-PHASE-3.md` §9.
+the commit contract (`shared/src/schemas/commit.ts`), the collector and the
+evidence packet (`backend/src/correlation/`). Not built: the prompt, the agent,
+the CLI, golden cases. **No model has been run against it**, so the phase has no
+measured accuracy — see `DOCUMENTATION-PHASE-3.md` §10.
 
 Phases 4 (root-cause agent) and 5 (dashboard) are not built — their tables and
 Zod contracts exist, no code.
@@ -53,7 +53,7 @@ on the benign half. See `DOCUMENTATION-EVALS.md` §10.
 ## Commands
 
 ```bash
-pnpm typecheck && pnpm test        # 96 tests, ~300ms, no network
+pnpm typecheck && pnpm test        # 109 tests, ~300ms, no network
 pnpm backend                       # ingestion API on :4000
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -124,11 +124,12 @@ copying that schema.
 and gitignored, not an external repo and not a JSON fixture. Reasoning in
 `DOCUMENTATION-PHASE-3.md` §2.
 
-**Still open:** `deploy-restart` emits `orders-api v1.4.2 starting up (deploy
+**Still open, and it blocks the golden cases rather than the prompt:**
+`deploy-restart` emits `orders-api v1.4.2 starting up (deploy
 7c1e044)`, and `7c1e044` matches nothing in the fixture. Pointing it at a real
 commit would make the strongest `null` test in the set — the log names a real
 candidate and the answer is still `null`. But that line is *in the evidence
 packet*, so changing it invalidates all six golden cases and moves the capture
 window off the fixture's anchor. Current position is to leave it until the
-correlator exists and the improvement is measurable. See §10 of the Phase 3
+correlator exists and the improvement is measurable. See §11 of the Phase 3
 document.

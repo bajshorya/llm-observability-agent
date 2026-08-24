@@ -139,7 +139,7 @@ checkable, not just claimed.
 In every module, the code that *decides* has no database, clock, or network:
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `json.ts`,
 `grounding.ts`, `score.ts`. The code that *persists* is separate: `engine.ts`,
-`rollup.ts`, `classify.ts`, `calls.ts`. This is why 96 tests run in ~300 ms with
+`rollup.ts`, `classify.ts`, `calls.ts`. This is why 109 tests run in ~300 ms with
 no fixtures. **When hunting for logic, it is in a pure file.**
 
 **3 · Everything crossing a boundary is validated with Zod.**
@@ -629,9 +629,38 @@ shell — and validates the result.
 cannot tune them. `--until` is the end of the anomaly window, so a commit that
 postdates its supposed effect is never fetched and never offered.
 
+**`context.ts`** (280 lines) — the correlation evidence packet, **pure**. Two
+halves with a seam: the incident (severity, affected area, the classifier's
+summary, the detector evidence) and the candidates (sha, timestamp, age relative
+to the window, author, subject, body, files).
+
+Budget: 25 commits, 12 files each, 400 chars of body, 300 of raw error text.
+The body budget is generous relative to Tier 2's 240-char log lines because it
+is load-bearing — the two most confusable fixture commits touch the same two
+files, and only their bodies separate them.
+
+One subtlety worth knowing: `describeTrigger` prints the **normalised**
+signature, which is what the detector compared against the baseline — and
+normalisation removes the token that points at code. `reading '<str>'` matches
+nothing in a repository; `reading 'toFixed'` matches a file about formatting
+money. So the packet prints the raw sample alongside the collapsed shape. The
+first draft omitted it and a test caught it.
+
+Short shas are rendered rather than full ones (fewer characters to mistype;
+`correlationSchema` accepts 7–40). Commits are rendered newest first — the order
+git prints them, and deliberately not reordered to discourage a recency
+heuristic, because arranging evidence to influence an answer is a worse failure
+than the one it would prevent. "No candidates" is stated explicitly, since an
+absent section reads as *not provided* and only "searched, found nothing" makes
+`null` correct.
+
 **`commits.test.ts`** (195 lines) — 15 cases, every one a plain string. Covers a
 body containing the unit separator, a multi-paragraph body, a binary file, a
 path containing a tab, an empty commit, an empty body, and four failure modes.
+
+**`context.test.ts`** (196 lines) — 13 cases. Checks that the raw error text
+survives, that "no candidates" is explicit, and that every budget cap prints
+what it elided rather than silently dropping it.
 
 **`scripts/build-fixture-repo.sh`** (repo root, 503 lines) — builds
 `fixtures/orders-api`, the repository correlation runs against: 12 real commits
@@ -723,7 +752,7 @@ Code-level tunables live in `detection/config.ts` (thresholds),
 pnpm install && pnpm db:push        # setup
 pnpm backend                        # ingestion API on :4000
 pnpm typecheck                      # strict TS, all packages
-pnpm test                           # 96 unit tests, ~300ms, no network
+pnpm test                           # 109 unit tests, ~300ms, no network
 
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -748,7 +777,7 @@ bash scripts/build-fixture-repo.sh --anchor now   # for a live demo; different s
 
 ## 18. Testing strategy
 
-Six test files, 96 tests, ~300 ms, no network or database.
+Seven test files, 109 tests, ~300 ms, no network or database.
 
 | File | Covers |
 |---|---|
@@ -758,6 +787,7 @@ Six test files, 96 tests, ~300 ms, no network or database.
 | `llm/structured.test.ts` | JSON extraction, repair loop, cost accounting, stub |
 | `eval/score.test.ts` | Grounding, severity bands, split summary |
 | `correlation/commits.test.ts` | `git log` parsing: separators in bodies, binary files, tabs in paths, four failure modes |
+| `correlation/context.test.ts` | Correlation packet: raw error text, explicit "no candidates", budget elisions, age formatting |
 
 Two conventions worth knowing. Tests run against the **real config objects**, not
 fixtures, so changing a threshold fails a test rather than silently altering
@@ -841,7 +871,7 @@ and an add.
 
 | Phase | Scope | State |
 |---|---|---|
-| 3 | Commit correlation | **Partial** — target repo, contract and collector built; packet, prompt, agent and CLI are not |
+| 3 | Commit correlation | **Partial** — target repo, contract, collector and evidence packet built; prompt, agent and CLI are not |
 | 4 | Root-cause + fix agent, human-gated | Schema and contract exist; no code |
 | 5 | Next.js dashboard with reasoning trace | Not started |
 
@@ -853,11 +883,11 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-What remains in Phase 3, in order: the evidence packet pairing the classifier's
-verdict with the candidate commits, `CORRELATOR_SYSTEM_PROMPT`, orchestration
+What remains in Phase 3, in order: `CORRELATOR_SYSTEM_PROMPT`, orchestration
 writing `correlations` rows and moving status to `correlated`, a `pnpm correlate`
 CLI, and golden cases.
 
-One decision precedes the packet — whether `deploy-restart`'s fabricated deploy
-sha becomes a real one. It would make the strongest `null` test in the set and
-it invalidates all six golden cases. `DOCUMENTATION-PHASE-3.md` §10.
+One decision precedes the golden cases — whether `deploy-restart`'s fabricated
+deploy sha becomes a real one. It would make the strongest `null` test in the
+set, and it invalidates all six existing cases.
+`DOCUMENTATION-PHASE-3.md` §11.
