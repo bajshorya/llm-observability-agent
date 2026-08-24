@@ -17,6 +17,7 @@
  *   LLM_PROVIDER, LLM_MODEL      which model the agents call, and an override
  *   GEMINI/NVIDIA/OPENROUTER key credentials, all optional
  *   OLLAMA_BASE_URL              local provider, no key needed
+ *   TARGET_REPO_PATH             the repository Phase 3 correlates against
  *
  * TWO DETAILS THAT MATTER MORE THAN THEY LOOK
  *
@@ -87,6 +88,17 @@ const envSchema = z.object({
   NVIDIA_API_KEY: optionalSecret,
   OPENROUTER_API_KEY: optionalSecret,
   OLLAMA_BASE_URL: z.string().default("http://localhost:11434"),
+
+  /**
+   * The repository Phase 3 correlates anomalies against. Relative paths
+   * resolve from the repo root, not cwd, for the same reason DATABASE_URL
+   * does.
+   *
+   * Defaults to the generated fixture, which is the repository the injected
+   * bugs actually come from — `bash scripts/build-fixture-repo.sh` builds it.
+   * Point this at a real checkout to correlate against real history.
+   */
+  TARGET_REPO_PATH: z.string().default("./fixtures/orders-api"),
 });
 
 const parsed = envSchema.safeParse(process.env);
