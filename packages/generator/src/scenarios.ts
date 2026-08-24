@@ -211,12 +211,15 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
   },
   "new-error": {
     description:
-      "A never-before-seen error signature appears — the null-price bug from commit a3f9c21",
+      "A never-before-seen error signature appears — the null-price bug from commit 0c701a0",
     benign: false,
     profile: (base) => ({ ...base, errorRate: 0.3 }),
     error: {
-      // Matches the bug we inject into the target app, so correlation has
-      // something true to find.
+      // Matches the bug committed to the target repository built by
+      // scripts/build-fixture-repo.sh, so correlation has something true to
+      // find. The sha is named in the description above but deliberately NOT
+      // in any emitted log line — a packet that contains the answer tests
+      // nothing but the model's ability to copy a string.
       message: () => "TypeError: Cannot read properties of null (reading 'toFixed')",
       errorType: "TypeError",
       statusCode: 500,
