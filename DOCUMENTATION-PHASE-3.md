@@ -6,9 +6,9 @@ and status still `open`. Phase 3 asks the next question — **which commit did
 this?**
 
 This document covers what has been built so far: the decision that was blocking
-the phase, the target repository, the commit contract, the collector and the
-evidence packet. The prompt and the agent itself are **not built**, and no model
-has been called. §10 is the honest inventory; §11 is the one decision still
+the phase, the target repository, the commit contract, the collector, the
+evidence packet and the prompt. The agent itself is **not built**, and no model
+has been called. §11 is the honest inventory; §12 is the one decision still
 outstanding.
 
 ---
@@ -138,7 +138,7 @@ the present for a live demo, at the cost of different shas.
 packet containing the answer would test nothing but a model's ability to copy a
 string. This is the correlation-stage equivalent of the classifier's grounding
 check, and it is a property of the generator that has to be actively preserved —
-see §11.
+see §12.
 
 ---
 
@@ -415,7 +415,103 @@ Candidate commits (6), searched 2026-08-14T19:02:00.000Z to
 
 ---
 
-## 8. Files
+## 8. The prompt — `correlation/prompt.ts`
+
+One exported constant, in its own file, for the same reasons as
+`classification/prompt.ts`: a prompt is a versionable artefact, `git log` should
+be able to answer "what did it say at the time", and a constant caches well on
+providers that support prompt caching.
+
+~915 tokens, comparable to the classifier's. Written **before any model was
+called with it** and before any correlation golden case exists — the same
+ordering the classifier prompt has held to byte-for-byte since before its first
+real run, including through runs that scored badly.
+
+### It is built around three failure modes
+
+Each one a capable model walks into unprompted, and each one the fixture history
+is built to expose:
+
+| Failure | Why it happens |
+|---|---|
+| **Recency** | the newest commit is the obvious answer and is usually wrong |
+| **Filename match** | a commit touching a plausibly-named file looks guilty |
+| **Answering anyway** | a model handed a list will pick from the list |
+
+### The distinction that needed care
+
+"Recency is not guilt" is easy to state and easy to overshoot. Recency *is*
+evidence — a change that shipped twenty minutes before an error first appears is
+genuinely more likely to be responsible than one from two days earlier, all else
+equal. The error is treating it as **sufficient**, not as relevant.
+
+So the prompt does not say to ignore timing. It says:
+
+> Timing narrows the field; it does not decide it.
+
+which is what an engineer actually does at three in the morning. A prompt that
+told the model to disregard recency would trade one bias for another and would
+be wrong more often on real incidents, where the guilty commit usually *is*
+recent.
+
+### A stated mechanism is the bar
+
+`reasoning` exists to be checked by a human. "This commit is recent and touches
+orders" can be neither verified nor refuted. "This commit added a call to
+`.toFixed` on a field the schema allows to be null, and the error is a null
+dereference on `toFixed`" can be confirmed in thirty seconds by opening the diff.
+
+Requiring a mechanism is therefore not a style preference — it is what makes a
+wrong answer *detectably* wrong, the same property `eval/grounding.ts` gives
+`affectedArea` in Tier 2.
+
+### Ruling out, not ranking
+
+One instruction earns its place on the fixture directly: a change to CI
+configuration, documentation, tests or tooling does not run in production and
+cannot throw an error there. Those are eliminated rather than scored, which
+removes two of the six candidates in the rendered packet before reasoning
+begins — including the newest one.
+
+### Confidence bands are spelled out
+
+| Band | Means |
+|---|---|
+| 0.8–1.0 | the error text names something this commit demonstrably introduced |
+| 0.5–0.8 | the commit changed the affected path and the timing fits, but the mechanism is inferred |
+| 0.2–0.5 | plausible, but another candidate explains it about as well |
+| below 0.2 | guessing — prefer `null` |
+
+Same reasoning as the classifier's severity bands: 0.7 means different things to
+different models, and an uncalibrated confidence is worse than none because it
+invites downstream code to threshold on it. Phase 4 will.
+
+### The prompt is tested — for discipline, not for wording
+
+`prompt.test.ts` does not assert phrasing; a prompt's quality is measured by an
+eval, not by a unit test. It guards one regression an eval **cannot** catch,
+because it makes the eval meaningless:
+
+The obvious way to raise a correlation score is to put an example in the prompt
+— name the file, quote the error, describe the answer's shape. It works, and it
+invalidates every number produced afterwards.
+
+`CLAUDE.md` states the rule. A rule living only in a document survives exactly
+as long as the next person who has not read it, so the test fails CI instead. It
+checks that no fixture identifier appears (`toFixed`, `pricing.js`,
+`orders-api`, seven others), that no commit sha appears, and that no worked
+example is offered at all.
+
+Verified by deliberately inserting a leak: three of the guards fired, naming the
+offending string.
+
+**Nothing fixture-specific appears in the prompt.** The `.toFixed` example above
+is in this document and in the file's header comment — neither of which the
+model ever sees.
+
+---
+
+## 9. Files
 
 | File | Lines | Pure? | What |
 |---|---|---|---|
@@ -424,7 +520,9 @@ Candidate commits (6), searched 2026-08-14T19:02:00.000Z to
 | `backend/src/correlation/git.ts` | 145 | impure | `defaultLookback`, `resolveTargetRepo`, `collectCommits` |
 | `backend/src/correlation/context.ts` | 280 | **pure** | `correlationBudget`, `describeAge`, `renderCorrelationContext` |
 | `backend/src/correlation/commits.test.ts` | 195 | — | 15 cases, all plain strings |
+| `backend/src/correlation/prompt.ts` | 137 | constant | `CORRELATOR_SYSTEM_PROMPT` |
 | `backend/src/correlation/context.test.ts` | 196 | — | 13 cases, all literals |
+| `backend/src/correlation/prompt.test.ts` | 92 | — | 6 cases guarding prompt discipline |
 | `scripts/build-fixture-repo.sh` | 503 | — | the target repository |
 
 Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
@@ -438,10 +536,10 @@ Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
 
 ---
 
-## 9. Verified behaviour
+## 10. Verified behaviour
 
-`pnpm typecheck` clean. **109 tests pass**, up from 81 — 15 for the parser and
-13 for the packet, and none of them touch a filesystem.
+`pnpm typecheck` clean. **115 tests pass**, up from 81 — 15 for the parser, 13
+for the packet and 6 for prompt discipline, and none of them touch a filesystem.
 
 The collector against the real fixture, for the golden window ending
 `2026-08-16T19:02Z`:
@@ -482,7 +580,7 @@ like when it exists.
 
 ---
 
-## 10. What is not built
+## 11. What is not built
 
 | Piece | State |
 |---|---|
@@ -490,7 +588,7 @@ like when it exists.
 | `candidateCommitSchema` etc. | ✅ Built |
 | Commit collector, pure + impure | ✅ Built |
 | `correlation/context.ts` — the evidence packet | ✅ Built |
-| `correlation/prompt.ts` — `CORRELATOR_SYSTEM_PROMPT` | Not built |
+| `correlation/prompt.ts` — `CORRELATOR_SYSTEM_PROMPT` | ✅ Built |
 | `correlation/correlate.ts` — orchestration, persistence | Not built |
 | `pnpm correlate` CLI | Not built |
 | Golden cases for correlation | Not built |
@@ -505,7 +603,7 @@ diagnosed` — and nothing has written `correlated` yet.
 
 ---
 
-## 11. The open decision, blocking the golden cases
+## 12. The open decision, blocking the golden cases
 
 The `deploy-restart` scenario emits this log line, and it reaches the model
 inside the evidence packet:
@@ -542,7 +640,7 @@ right order anyway, since right now the improvement would be unmeasurable.
 
 ---
 
-## 12. Trade-offs
+## 13. Trade-offs
 
 | Decision | Cost accepted |
 |---|---|
@@ -555,7 +653,7 @@ right order anyway, since right now the improvement would be unmeasurable.
 
 ---
 
-## 13. Known limitations
+## 14. Known limitations
 
 - **No model has been run against this.** Everything above is plumbing and
   argument. The phase's actual claim — that an LLM can pick the guilty commit
@@ -574,7 +672,7 @@ right order anyway, since right now the improvement would be unmeasurable.
 
 ---
 
-## 14. What Phase 3 hands to Phase 4
+## 15. What Phase 3 hands to Phase 4
 
 Not yet anything — nothing writes `correlations` rows. When it does, Phase 4's
 root-cause agent gets the incident from Tier 2, the suspected commit from this

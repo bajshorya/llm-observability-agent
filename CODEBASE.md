@@ -139,7 +139,7 @@ checkable, not just claimed.
 In every module, the code that *decides* has no database, clock, or network:
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `json.ts`,
 `grounding.ts`, `score.ts`. The code that *persists* is separate: `engine.ts`,
-`rollup.ts`, `classify.ts`, `calls.ts`. This is why 109 tests run in ~300 ms with
+`rollup.ts`, `classify.ts`, `calls.ts`. This is why 115 tests run in ~300 ms with
 no fixtures. **When hunting for logic, it is in a pure file.**
 
 **3 · Everything crossing a boundary is validated with Zod.**
@@ -600,9 +600,10 @@ that produced it.
 ## 14a. Backend — correlation (Phase 3, partial)
 
 The first stage that reads a second data source. Everything before it looks at
-what the service did; this puts that next to source history. **Only the
-collector is built** — no evidence packet, no prompt, no agent, and no model has
-been called. See `DOCUMENTATION-PHASE-3.md` §9.
+what the service did; this puts that next to source history. The inputs are
+built — collector, evidence packet and prompt — but **the agent is not, and no
+model has been called**, so this stage has no measured accuracy. See
+`DOCUMENTATION-PHASE-3.md` §11.
 
 **`commits.ts`** (214 lines) — the `git log` parser, **pure**. Exports
 `GIT_LOG_FORMAT`, `GIT_LOG_ARGS` and `parseGitLog`. Text in, commits out: no
@@ -654,6 +655,22 @@ than the one it would prevent. "No candidates" is stated explicitly, since an
 absent section reads as *not provided* and only "searched, found nothing" makes
 `null` correct.
 
+**`prompt.ts`** (137 lines) — the correlator system prompt, a constant in its
+own file for the same reason the classifier's is: a versionable artefact `git
+log` can answer questions about. ~915 tokens.
+
+Built around three failure modes a capable model walks into unprompted, each of
+which the fixture is built to expose — recency, filename matching, and answering
+from the list rather than declining. The care went into not overshooting the
+first: recency *is* evidence, and the instruction is "timing narrows the field;
+it does not decide it" rather than "ignore timing", because a prompt that
+disregarded recency would be wrong more often on real incidents where the guilty
+commit genuinely is recent.
+
+Requires a stated mechanism, which is what makes a wrong answer *detectably*
+wrong — the property `eval/grounding.ts` gives `affectedArea` in Tier 2.
+Confidence bands are spelled out for the same reason severity bands are.
+
 **`commits.test.ts`** (195 lines) — 15 cases, every one a plain string. Covers a
 body containing the unit separator, a multi-paragraph body, a binary file, a
 path containing a tab, an empty commit, an empty body, and four failure modes.
@@ -661,6 +678,14 @@ path containing a tab, an empty commit, an empty body, and four failure modes.
 **`context.test.ts`** (196 lines) — 13 cases. Checks that the raw error text
 survives, that "no candidates" is explicit, and that every budget cap prints
 what it elided rather than silently dropping it.
+
+**`prompt.test.ts`** (92 lines) — guards prompt discipline, not wording. The
+easiest way to raise a correlation score is to put an example in the prompt, and
+it invalidates every number produced afterwards. `CLAUDE.md` states that rule; a
+rule living only in a document survives as long as the next person who has not
+read it, so this fails CI instead. Checks that no fixture identifier appears, no
+sha appears, and no worked example is offered. Verified by inserting a leak
+deliberately and watching three guards fire.
 
 **`scripts/build-fixture-repo.sh`** (repo root, 503 lines) — builds
 `fixtures/orders-api`, the repository correlation runs against: 12 real commits
@@ -752,7 +777,7 @@ Code-level tunables live in `detection/config.ts` (thresholds),
 pnpm install && pnpm db:push        # setup
 pnpm backend                        # ingestion API on :4000
 pnpm typecheck                      # strict TS, all packages
-pnpm test                           # 109 unit tests, ~300ms, no network
+pnpm test                           # 115 unit tests, ~300ms, no network
 
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -777,7 +802,7 @@ bash scripts/build-fixture-repo.sh --anchor now   # for a live demo; different s
 
 ## 18. Testing strategy
 
-Seven test files, 109 tests, ~300 ms, no network or database.
+Eight test files, 115 tests, ~300 ms, no network or database.
 
 | File | Covers |
 |---|---|
@@ -788,6 +813,7 @@ Seven test files, 109 tests, ~300 ms, no network or database.
 | `eval/score.test.ts` | Grounding, severity bands, split summary |
 | `correlation/commits.test.ts` | `git log` parsing: separators in bodies, binary files, tabs in paths, four failure modes |
 | `correlation/context.test.ts` | Correlation packet: raw error text, explicit "no candidates", budget elisions, age formatting |
+| `correlation/prompt.test.ts` | Prompt discipline: no fixture identifiers, no shas, no worked examples |
 
 Two conventions worth knowing. Tests run against the **real config objects**, not
 fixtures, so changing a threshold fails a test rather than silently altering
@@ -871,7 +897,7 @@ and an add.
 
 | Phase | Scope | State |
 |---|---|---|
-| 3 | Commit correlation | **Partial** — target repo, contract, collector and evidence packet built; prompt, agent and CLI are not |
+| 3 | Commit correlation | **Partial** — target repo, contract, collector, evidence packet and prompt built; agent and CLI are not |
 | 4 | Root-cause + fix agent, human-gated | Schema and contract exist; no code |
 | 5 | Next.js dashboard with reasoning trace | Not started |
 
@@ -883,11 +909,10 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-What remains in Phase 3, in order: `CORRELATOR_SYSTEM_PROMPT`, orchestration
-writing `correlations` rows and moving status to `correlated`, a `pnpm correlate`
-CLI, and golden cases.
+What remains in Phase 3, in order: orchestration writing `correlations` rows and
+moving status to `correlated`, a `pnpm correlate` CLI, and golden cases.
 
 One decision precedes the golden cases — whether `deploy-restart`'s fabricated
 deploy sha becomes a real one. It would make the strongest `null` test in the
 set, and it invalidates all six existing cases.
-`DOCUMENTATION-PHASE-3.md` §11.
+`DOCUMENTATION-PHASE-3.md` §12.
