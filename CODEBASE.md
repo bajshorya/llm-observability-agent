@@ -33,7 +33,8 @@ the code win.
 [11. backend: detection](#11-backend--detection-tier-1) ·
 [12. backend: llm](#12-backend--llm) ·
 [13. backend: classification](#13-backend--classification-tier-2) ·
-[14. backend: eval](#14-backend--eval)
+[14. backend: eval](#14-backend--eval) ·
+[14a. backend: correlation](#14a-backend--correlation-phase-3-partial)
 
 **Part IV — Reference**
 [15. Algorithms](#15-the-algorithms) ·
@@ -138,7 +139,7 @@ checkable, not just claimed.
 In every module, the code that *decides* has no database, clock, or network:
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `json.ts`,
 `grounding.ts`, `score.ts`. The code that *persists* is separate: `engine.ts`,
-`rollup.ts`, `classify.ts`, `calls.ts`. This is why 81 tests run in ~300 ms with
+`rollup.ts`, `classify.ts`, `calls.ts`. This is why 96 tests run in ~300 ms with
 no fixtures. **When hunting for logic, it is in a pure file.**
 
 **3 · Everything crossing a boundary is validated with Zod.**
@@ -326,9 +327,19 @@ affectedArea), `correlationSchema` and `hypothesisSchema` for Phases 3 and 4, an
 `llmCallStatsSchema` for the cost record. Also `llmAgents` — the three agent
 names — so cost can be attributed per stage.
 
+**`src/schemas/commit.ts`** (93 lines) — source history, Phase 3.
+`candidateCommitSchema` (full 40-char sha, `committedAt`, author, subject, body,
+files), `changedFileSchema` and `commitWindowSchema`. Line counts are
+**nullable** rather than defaulted to zero, because `git log --numstat` prints
+`-` for a binary file and "0 lines changed" is a different claim from "the count
+does not exist". `commitWindowSchema` carries `since` and `until` alongside the
+commits so that "no commit explains this" stays distinguishable from "we never
+looked". Subject and body are separate fields — they carry different weight as
+evidence and the prompt will render them differently.
+
 **`src/signature.ts`** (52 lines) — normalisation. See [§15](#15-the-algorithms).
 
-**`src/index.ts`** (4 lines) — re-exports everything.
+**`src/index.ts`** (33 lines) — re-exports everything.
 
 ## 9. `packages/generator`
 
@@ -586,6 +597,54 @@ real pipeline runs against scratch databases under `.tmp/`. Required whenever th
 evidence packet changes, since a stored case is a fixed artefact of the renderer
 that produced it.
 
+## 14a. Backend — correlation (Phase 3, partial)
+
+The first stage that reads a second data source. Everything before it looks at
+what the service did; this puts that next to source history. **Only the
+collector is built** — no evidence packet, no prompt, no agent, and no model has
+been called. See `DOCUMENTATION-PHASE-3.md` §9.
+
+**`commits.ts`** (214 lines) — the `git log` parser, **pure**. Exports
+`GIT_LOG_FORMAT`, `GIT_LOG_ARGS` and `parseGitLog`. Text in, commits out: no
+subprocess, no clock, no database, so its tests need no repository at all.
+
+The format is framed on two ASCII control characters rather than readable
+punctuation, because a commit body contains whatever a developer typed and a
+parser keyed on punctuation mis-attributes causes rather than crashing. `\x1e`
+brackets each header, `\x1f` separates fields, and the body is the last field —
+split off by *position*, so a body containing `\x1f` parses correctly. A `\x1e`
+inside a body is not closable in this format and is **detected** instead, by two
+guards that leave no quiet path through. A malformed record throws rather than
+being skipped: a correlation over a history with a hole in it looks exactly as
+confident as a correct one. Detailed in `PHASE-3` §5.
+
+**`git.ts`** (145 lines) — the impure half. `resolveTargetRepo` resolves
+`TARGET_REPO_PATH` (relative paths from the repo root, not cwd) and verifies it
+is really a repository, with an error naming the script that builds the fixture.
+`collectCommits` spawns `git log` via `execFile` — an argument array, never a
+shell — and validates the result.
+
+`defaultLookback` is 48 hours and 25 commits, whichever binds first. Both are
+**arguments, not measurements**; the header says so, because six golden cases
+cannot tune them. `--until` is the end of the anomaly window, so a commit that
+postdates its supposed effect is never fetched and never offered.
+
+**`commits.test.ts`** (195 lines) — 15 cases, every one a plain string. Covers a
+body containing the unit separator, a multi-paragraph body, a binary file, a
+path containing a tab, an empty commit, an empty body, and four failure modes.
+
+**`scripts/build-fixture-repo.sh`** (repo root, 503 lines) — builds
+`fixtures/orders-api`, the repository correlation runs against: 12 real commits
+over nine days, containing the null-price bug the `new-error` scenario emits.
+Generated rather than committed, with every date and identity pinned so the shas
+are byte-identical on every run. **Gitignored** — a fresh clone must build it.
+
+The history is built to defeat three cheap heuristics: the bug is not the newest
+commit, three separate commits touch `pricing.js`, and the rate-limiter commit
+is a tempting wrong answer for a scenario whose correct answer is `null`. Same
+discipline as the benign scenarios in Tier 2 — a test with only one available
+answer measures nothing. Detailed in `PHASE-3` §3.
+
 ---
 
 # Part IV — Reference
@@ -651,11 +710,12 @@ Environment (`.env`, all optional — defaults work):
 | `OPENROUTER_API_KEY` | — | Free `:free` variants |
 | `OLLAMA_BASE_URL` | `localhost:11434` | Local, no key |
 | `INGEST_URL` | `localhost:4000/ingest` | Generator target |
-| `GITHUB_TOKEN`, `GITHUB_REPO` | — | Phase 3, unused |
+| `TARGET_REPO_PATH` | `./fixtures/orders-api` | The repository Phase 3 correlates against. Relative paths resolve from the repo root, not cwd |
+| `GITHUB_TOKEN`, `GITHUB_REPO` | — | Phase 3, unused — correlation reads a local checkout, not the API |
 
 Code-level tunables live in `detection/config.ts` (thresholds),
-`llm/config.ts` (temperature, retries, models) and `classification/context.ts`
-(`contextBudget`).
+`llm/config.ts` (temperature, retries, models), `classification/context.ts`
+(`contextBudget`) and `correlation/git.ts` (`defaultLookback`).
 
 ## 17. Commands
 
@@ -663,7 +723,7 @@ Code-level tunables live in `detection/config.ts` (thresholds),
 pnpm install && pnpm db:push        # setup
 pnpm backend                        # ingestion API on :4000
 pnpm typecheck                      # strict TS, all packages
-pnpm test                           # 77 unit tests, ~300ms, no network
+pnpm test                           # 96 unit tests, ~300ms, no network
 
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -681,11 +741,14 @@ pnpm classify --stats               # funnel + cost
 pnpm eval                           # score the golden set
 pnpm eval --provider stub           # statistical baseline
 pnpm eval --show <name>             # a case's evidence packet
+
+bash scripts/build-fixture-repo.sh  # the repo Phase 3 correlates against
+bash scripts/build-fixture-repo.sh --anchor now   # for a live demo; different shas
 ```
 
 ## 18. Testing strategy
 
-Five test files, 81 tests, ~300 ms, no network or database.
+Six test files, 96 tests, ~300 ms, no network or database.
 
 | File | Covers |
 |---|---|
@@ -694,6 +757,7 @@ Five test files, 81 tests, ~300 ms, no network or database.
 | `classification/context.test.ts` | Budget caps, shape sampling, narration survival, timeline, endpoint breakdown |
 | `llm/structured.test.ts` | JSON extraction, repair loop, cost accounting, stub |
 | `eval/score.test.ts` | Grounding, severity bands, split summary |
+| `correlation/commits.test.ts` | `git log` parsing: separators in bodies, binary files, tabs in paths, four failure modes |
 
 Two conventions worth knowing. Tests run against the **real config objects**, not
 fixtures, so changing a threshold fails a test rather than silently altering
@@ -756,19 +820,44 @@ why `pnpm classify` caps a run at 10 anomalies. Quota is bucketed per model, so
 provider in use is free and a cost column reading `0.00` would imply precision
 that isn't there.
 
+**Correlation is unproven.** The collector works and is tested, but no model has
+been asked to pick a commit. The phase's actual claim — that an LLM can identify
+the guilty commit among six plausible ones — has no number behind it yet.
+
+**The fixture history is authored by us**, so a critic can fairly say the
+correlation task was made findable. The decoys and the two `null` cases are what
+answer that; the positive case alone would not.
+
+**Commit time is not deploy time.** Correlation matches against when a commit
+was authored, not when it shipped. In any real pipeline those differ, sometimes
+by days.
+
+**No diff content, and renames are lost.** The collector carries subjects,
+bodies and per-file line counts — not hunks — so a bug visible only in the diff
+is invisible to the agent. `--no-renames` means a moved file looks like a delete
+and an add.
+
 ## 20. What is not built
 
 | Phase | Scope | State |
 |---|---|---|
-| 3 | GitHub commit correlation via Octokit | Schema and Zod contract exist; no code |
+| 3 | Commit correlation | **Partial** — target repo, contract and collector built; packet, prompt, agent and CLI are not |
 | 4 | Root-cause + fix agent, human-gated | Schema and contract exist; no code |
 | 5 | Next.js dashboard with reasoning trace | Not started |
 
-Phase 3 needs one decision first: the correlation agent needs commits that
-genuinely explain the injected bugs. The generator currently references a
-fabricated sha (`a3f9c21`), so it needs either a real repository with real
-history to correlate against, or a synthesized history committed as a fixture.
+Phase 3's blocking decision is settled: correlation runs against a real git
+repository built by `scripts/build-fixture-repo.sh` and gitignored, rather than
+an external repo or a JSON fixture. `DOCUMENTATION-PHASE-3.md` §2 gives the
+reasoning and what it costs.
 
-The immediate next step, though, is smaller: a single run of `pnpm eval` against
-Gemini settles whether the classifier tier delivers what it was built to deliver.
-Everything after that depends on the answer.
+Note the change of approach from the original plan: correlation reads a **local
+checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
+
+What remains in Phase 3, in order: the evidence packet pairing the classifier's
+verdict with the candidate commits, `CORRELATOR_SYSTEM_PROMPT`, orchestration
+writing `correlations` rows and moving status to `correlated`, a `pnpm correlate`
+CLI, and golden cases.
+
+One decision precedes the packet — whether `deploy-restart`'s fabricated deploy
+sha becomes a real one. It would make the strongest `null` test in the set and
+it invalidates all six golden cases. `DOCUMENTATION-PHASE-3.md` §10.

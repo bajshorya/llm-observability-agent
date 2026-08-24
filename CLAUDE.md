@@ -22,6 +22,7 @@ evals).
 | Architecture, data model, every source file | `CODEBASE.md` |
 | Why a threshold is what it is | `DOCUMENTATION-PHASE-1.md` |
 | The LLM layer in depth | `DOCUMENTATION-PHASE-2.md` |
+| Commit correlation, and the fixture repo | `DOCUMENTATION-PHASE-3.md` |
 | How evaluation works and what it found | `DOCUMENTATION-EVALS.md` |
 
 Every source file also opens with a detailed header explaining what it does and
@@ -34,8 +35,16 @@ The phase documents are chronological, so where two disagree the later one wins.
 
 Phases 0–2 are done: ingestion, storage, the three Tier 1 detectors, the LLM
 provider layer, the Tier 2 classifier, cost logging, and a golden-set eval
-harness. Phases 3 (commit correlation), 4 (root-cause agent) and 5 (dashboard)
-are not built — their tables and Zod contracts exist, no code.
+harness.
+
+Phase 3 is **in progress**. Built: the target repository (`scripts/build-fixture-repo.sh`),
+the commit contract (`shared/src/schemas/commit.ts`), and the collector
+(`backend/src/correlation/`). Not built: the evidence packet, the prompt, the
+agent, the CLI, golden cases. **No model has been run against it**, so the
+phase has no measured accuracy — see `DOCUMENTATION-PHASE-3.md` §9.
+
+Phases 4 (root-cause agent) and 5 (dashboard) are not built — their tables and
+Zod contracts exist, no code.
 
 The two-tier claim is **measured, not asserted**: on `gemini-3.5-flash` the
 golden set scores 6/6 on every axis, stably; the statistical baseline scores 0/3
@@ -44,13 +53,15 @@ on the benign half. See `DOCUMENTATION-EVALS.md` §10.
 ## Commands
 
 ```bash
-pnpm typecheck && pnpm test        # 81 tests, ~300ms, no network
+pnpm typecheck && pnpm test        # 96 tests, ~300ms, no network
 pnpm backend                       # ingestion API on :4000
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
 pnpm detect                        # Tier 1 — free, never calls a model
 pnpm classify --preview <id>       # the exact prompt, calls nothing
 pnpm eval --provider gemini        # score the golden set
+
+bash scripts/build-fixture-repo.sh # the repo Phase 3 correlates against
 ```
 
 ## Conventions that matter
@@ -91,14 +102,33 @@ been byte-for-byte unchanged since before the first real model run, deliberately
 including through runs that scored badly. Fix evidence and test data instead, and
 be able to justify each change without reference to the score it produced.
 
+**The fixture repo is generated, and its shas are load-bearing.**
+`fixtures/orders-api` is gitignored — build it with `bash
+scripts/build-fixture-repo.sh`. Every date and identity is pinned so the shas
+are identical on every run; editing the script changes them, and the null-price
+sha is referenced in `generator/src/scenarios.ts`. `--anchor now` deliberately
+produces different shas and is for live demos only.
+
+**The lookback is 48h/25 commits and the fixture is built to sit inside it.**
+A decoy commit once landed two minutes outside the window and was silently never
+offered as a candidate. If you move a fixture commit, check it still appears in
+`collectCommits`.
+
 **`pnpm db:push` always writes to `data/dev.db`**, regardless of `DATABASE_URL` —
 drizzle-kit runs outside the app's env loading. Scratch databases are made by
 copying that schema.
 
-## Open decision, blocking Phase 3
+## Open decision, blocking the correlation prompt
 
-The correlation agent needs commits that genuinely explain the injected bugs. The
-generator currently references a fabricated sha (`a3f9c21`). Phase 3 needs either
-a real repository with real history to correlate against, or a synthesized
-history committed as a fixture. That choice changes the work materially and
-should be settled before starting.
+**Settled:** Phase 3 correlates against a real git repository built by a script
+and gitignored, not an external repo and not a JSON fixture. Reasoning in
+`DOCUMENTATION-PHASE-3.md` §2.
+
+**Still open:** `deploy-restart` emits `orders-api v1.4.2 starting up (deploy
+7c1e044)`, and `7c1e044` matches nothing in the fixture. Pointing it at a real
+commit would make the strongest `null` test in the set — the log names a real
+candidate and the answer is still `null`. But that line is *in the evidence
+packet*, so changing it invalidates all six golden cases and moves the capture
+window off the fixture's anchor. Current position is to leave it until the
+correlator exists and the improvement is measurable. See §10 of the Phase 3
+document.

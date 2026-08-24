@@ -1,6 +1,6 @@
 # Start Here
 
-There are ~30,000 words of documentation in this repo for ~4,900 lines of code.
+There are ~44,000 words of documentation in this repo for ~6,800 lines of code.
 **Do not read them in order.** They are reference material — written to be
 searched when you have a specific question, the way you use a man page.
 
@@ -34,8 +34,13 @@ fix.
         TIER 2  LLM classifier                     ~1 call per incident
         severity · summary · is this real? · where
                                     │
-                                    ├── real     ──▶ stays open, Phase 3 correlates commits
+                                    ├── real     ──▶ stays open
                                     └── benign   ──▶ dismissed
+                                            │
+                                            ▼
+        TIER 3  commit correlation                 in progress
+        which commit did this, or none?
+        collector built · packet, prompt and agent not
 ```
 
 The funnel is the whole point. Tier 1 is free and can run every 30 seconds.
@@ -60,8 +65,9 @@ why the default provider is an offline stub.
 In every module, the logic that decides things has no database, clock, or I/O —
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `grounding.ts`. The
 code that touches the database is separate — `engine.ts`, `rollup.ts`,
-`classify.ts`, `calls.ts`. That split is why 81 tests run in 300ms with no
-fixtures. **When you are hunting for logic, it is in a pure file.**
+`classify.ts`, `calls.ts`. That split is why 96 tests run in 300ms with no
+fixtures — including a `git log` parser tested entirely on strings, with no
+repository anywhere near it. **When you are hunting for logic, it is in a pure file.**
 
 **3. Everything crossing a boundary is validated with Zod.**
 Incoming logs, LLM output, golden cases. Nothing downstream ever consumes
@@ -84,7 +90,7 @@ per distinct message shape instead of twenty copies of the same line.
 
 ## The code map
 
-Faster than the docs for most questions. The whole system is 4,900 lines.
+Faster than the docs for most questions. The whole system is ~6,800 lines.
 
 ```
 packages/shared/        The contract. Zod schemas + signature normalisation.
@@ -102,7 +108,12 @@ packages/backend/src/
                         structured.ts is the repair loop. providers/ is one file each.
   classification/       context.ts builds what the model sees · prompt.ts is the
                         prompt · classify.ts orchestrates
+  correlation/          Phase 3, partial. commits.ts parses git log (pure) ·
+                        git.ts spawns it and bounds the lookback
   eval/                 Golden set: cases/, grounding.ts, score.ts
+
+scripts/                capture-cases.sh rebuilds the golden set ·
+                        build-fixture-repo.sh builds the repo correlation reads
 ```
 
 **Three files worth reading in full**, in this order — they carry the design:
@@ -135,8 +146,11 @@ want the extended reasoning behind a particular decision.
 | How do I add another LLM provider? | `PHASE-2` §4 |
 | Why would an anomaly be dismissed? | `PHASE-2` §9 and `EVALS` §3 |
 | Is the classifier any good? | `EVALS` §8–10 |
+| Which commit caused it? | `PHASE-3` §1, §5 |
+| Where do the fixture commits come from? | `PHASE-3` §3 |
+| Why is `suspectedCommitSha` nullable? | `PHASE-3` §4 |
 | What is known to be broken? | `CODEBASE.md` §19 — consolidated |
-| What is next? | `PHASE-2` §18 |
+| What is next? | `PHASE-3` §9–10 |
 
 (`PHASE-1` = `DOCUMENTATION-PHASE-1.md`, and so on.)
 
@@ -144,7 +158,7 @@ want the extended reasoning behind a particular decision.
 
 ## The reading order
 
-Eight documents, about two and a half hours if you read them all. You don't need
+Nine documents, about three hours if you read them all. You don't need
 to. **Fifty-five minutes in this order and you understand the system**; the rest
 becomes lookup.
 
@@ -164,6 +178,7 @@ question, not reading you owe.
 | Why a threshold is 3σ; how the statistics work | `PHASE-1` §4–6, §13 |
 | The LLM layer in depth; adding a provider | `PHASE-2` §4–8 |
 | How evaluation works and what it found | `EVALS` — whole document |
+| Commit correlation and the fixture repository | `PHASE-3` — whole document |
 | Ingestion, schemas and the generator in detail | `DOCUMENTATION` §6–8 |
 
 ### Step 3, concretely
@@ -200,12 +215,14 @@ interesting in that position and misleading in any other.
 | Structured output and the repair loop | `CODEBASE.md` §12 | `PHASE-2` §5 |
 | The evidence packet | `CODEBASE.md` §13 | `EVALS` §9 |
 | **Evals** | `CODEBASE.md` §14 | `EVALS` — whole document |
+| **Commit correlation** | `CODEBASE.md` §14a | `PHASE-3` §3–6 |
 | The data model | `CODEBASE.md` §4 | `DOCUMENTATION` §9 |
 
 **On "agent" specifically**, since the word is overloaded everywhere: here it
 means *a role that calls an LLM with its own prompt and its own output schema*.
 Three are declared in `packages/shared/src/schemas/agents.ts` — `classifier`
-(built), `correlator` (Phase 3) and `root_cause` (Phase 4). Separate prompts per
+(built), `correlator` (Phase 3, its inputs built but the agent itself not) and
+`root_cause` (Phase 4). Separate prompts per
 role rather than one mega-prompt: cheaper, easier to evaluate, and each one's
 cost is attributable in the `llm_calls` table.
 
@@ -223,13 +240,19 @@ Known instances:
 
 - `PHASE-1` §16 says anomalies are never dismissed and stay `open`. Phase 2
   changed that — see `PHASE-2` §9 and §10.
-- `PHASE-1` says 27 unit tests. There are now 81.
+- `PHASE-1` says 27 unit tests, `PHASE-2` says 77. There are now 96.
 - `PHASE-2` §6 describes the log sample as drawn evenly across the window. It is
   now drawn by message shape — see `EVALS` §4, which explains why the original
   approach silently dropped the one line that explained a benign window.
 - `PHASE-2` §6 and `EVALS` §3 describe an evidence packet with no per-minute
   timeline and no per-endpoint breakdown. Both were added later; `CODEBASE.md`
   §13 and `EVALS` §9 are current.
+- The original proposal and `CODEBASE.md` §16 both imply Phase 3 reads the GitHub
+  API via Octokit. It does not — it reads a local checkout at
+  `TARGET_REPO_PATH`. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
+- `PHASE-2` §18 says the correlation agent "gets a filtered, described,
+  prioritised list". True, and still only half of its input; the other half is
+  `PHASE-3` §3.
 
 This is the cost of chronological documentation, and it is worth knowing about
 before it misleads you.

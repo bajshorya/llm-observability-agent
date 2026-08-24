@@ -1057,3 +1057,34 @@ A new case from a *real* incident, if this is ever pointed at a real system, is
 the same flow minus the generator: detect, then `pnpm eval --capture`. The
 harness has no dependency on synthetic data — it captures whatever the pipeline
 produced.
+
+---
+
+## 14. What this harness does not yet cover
+
+Everything above measures **Tier 2 only**. The golden set scores a classifier:
+severity, verdict, and whether `affectedArea` is grounded in the evidence.
+
+Phase 3 has since added the inputs for commit correlation — a real fixture
+repository, a validated commit contract, and the collector — but **no eval and
+no model run**. There is no correlation accuracy in this document because there
+is no measurement to report, and an assertion would be worse than a gap.
+
+When it exists it will need its own axes, and the split-scorecard lesson from §7
+applies directly: a model that always names the newest commit would score well
+on a set where the newest commit is always guilty. That is why the fixture
+history in `DOCUMENTATION-PHASE-3.md` §3 is built so the newest commit is
+innocent, three commits touch the same file, and two scenarios have `null` as
+their correct answer.
+
+The likely axes:
+
+| Axis | Why it is separate |
+|---|---|
+| correct sha when one exists | the positive case |
+| `null` when no commit explains it | the case a model will not volunteer |
+| implicated files within the chosen commit | a right sha for the wrong reason is still wrong |
+| confidence calibrated against correctness | a confidently wrong correlation is the worst output this system can produce |
+
+Reporting those blended into one number would hide exactly what the classifier's
+split scorecard was built to expose.
