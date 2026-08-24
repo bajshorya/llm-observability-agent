@@ -204,6 +204,65 @@ runs the full pipeline and the tests need no network.
 
 ---
 
+## Correlation (Phase 3)
+
+The stage that reads a second source. Everything before it looks at what the
+service did; this puts that next to the source repository's history and asks
+which commit explains it — **or whether none does**.
+
+```bash
+pnpm correlate                   # correlate real incidents (default: stub, free, offline)
+pnpm correlate --preview         # print the exact prompt, call nothing
+pnpm correlate --provider stub   # the naive "blame the newest commit" baseline
+pnpm correlate --lookback 168    # widen the commit window for one run
+pnpm correlate --repo <path>     # a different checkout, without editing .env
+pnpm correlate --stats           # the correlation funnel
+```
+
+```
+$ pnpm correlate
+Provider: gemini (gemini-3.5-flash)
+  99335b7a orders-api [6 candidate(s)]: 915c23dfe8 (confidence 0.90)
+    Commit 915c23dfe8 introduced 'discounted_total' to order responses… This
+    change likely passes a null value to the recently extracted 'formatPrice'
+    helper (introduced in b103ced763), which formats prices using '.toFixed()'.
+    files: src/lib/pricing.js, src/routes/orders.js
+    1793 in / 200 out, 2499ms, 0 repair(s)
+```
+
+**It correlates against a real git repository.** `bash
+scripts/build-fixture-repo.sh` builds one at `fixtures/orders-api` — twelve real
+commits, real shas, real `git log --numstat`. It is generated rather than
+committed, with every date and identity pinned, so the shas are byte-identical
+on every machine. Point `TARGET_REPO_PATH` at a real checkout to use one.
+
+**The history is built to be hard.** A log with one obviously guilty commit
+tests nothing. So the newest commit is innocent, three separate commits touch
+the same file, and one scenario's most tempting candidate is the wrong answer.
+The `--provider stub` baseline implements exactly the heuristic that history
+defeats — blame the newest commit — which is what makes the comparison mean
+something.
+
+**`null` is a real answer.** Most incidents are not caused by a recent deploy.
+A model with no way to decline invents a culprit, so `suspectedCommitSha` is
+nullable, the prompt says not to return the best of a bad set, and a declined
+correlation is still written to the database — "considered and declined" has to
+stay distinguishable from "never ran".
+
+**The answer is checked against the evidence.** A sha naming no candidate the
+model was shown fails the correlation and writes nothing; a file not in the
+named commit is dropped and reported. Zod proves the answer is well-*formed*; it
+cannot prove it is *true to the evidence*, and a hallucinated sha would be
+inherited by Phase 4 as established fact.
+
+**No measurement yet.** In one observed run the model above named the right
+commit and the naive baseline named the wrong one. That is n=1 on the positive
+half — nothing has tested the `null` path, which is the half that actually
+distinguishes this tier from its baseline. There is no correlation eval, so
+there is no accuracy figure.
+
+---
+
 ## Evals
 
 Six golden cases — three real incidents, three benign windows that trip Tier 1
@@ -272,8 +331,13 @@ packages/
   backend/     Fastify ingestion API, Drizzle schema, SQLite client,
                the Tier 1 detection pipeline (src/detection), the LLM
                provider layer (src/llm), the Tier 2 classifier
-               (src/classification) and the golden-set evals (src/eval).
+               (src/classification), commit correlation (src/correlation)
+               and the golden-set evals (src/eval).
   generator/   Synthetic traffic with on-command anomaly injection.
+
+scripts/       capture-cases.sh rebuilds the golden set from real runs.
+               build-fixture-repo.sh builds the repository correlation reads.
+fixtures/      The generated target repository. Gitignored — build it.
 ```
 
 The split that matters throughout is **pure vs impure**. In `src/detection`,
@@ -281,7 +345,10 @@ The split that matters throughout is **pure vs impure**. In `src/detection`,
 them provable with fixed inputs; `rollup.ts` and `engine.ts` own the database. In
 `src/llm` and `src/classification` the same line runs between `context.ts`,
 `structured.ts` and `json.ts` — pure, and tested with a fake provider — and
-`classify.ts` and `calls.ts`, which persist.
+`classify.ts` and `calls.ts`, which persist. `src/correlation` splits the same
+way: `commits.ts` parses `git log` and `grounding.ts` checks the answer, neither
+touching anything, while `git.ts` spawns the subprocess and `correlate.ts` owns
+the database.
 
 `@obs/shared` is consumed directly as TypeScript — no build step between packages.
 
@@ -322,7 +389,22 @@ the stub is the default and runs the whole pipeline — and the project runs at 
 **The expensive tier is opt-in.** `pnpm detect` never calls a model. Tier 1 is
 free and can run every thirty seconds; Tier 2 spends quota, so it is a separate
 command and an explicit `--classify` flag. That separation is also what keeps the
-claim "the statistical layer works on its own" honest and checkable.
+claim "the statistical layer works on its own" honest and checkable. Correlation
+is a third command for the same reason — every stage that spends quota is an
+explicit act.
+
+**Every stage has a baseline it must beat.** The default provider is a
+deterministic offline stub, and it is not a mock: for classification it applies
+the *statistical* judgement Tier 2 exists to improve on, and for correlation the
+*blame the newest commit* heuristic Phase 3 exists to improve on. Both are the
+thing you would build without a model. The gap between the stub's score and a
+real model's is the measured value of the LLM, which is why the stub's summaries
+say "no model was called" rather than imitating one.
+
+**Declining is a first-class answer.** Tier 2 can dismiss a flagged window;
+correlation can name no commit. Both are recorded rather than treated as
+absence, because a system that can only ever answer is a system whose answers
+mean less.
 
 ---
 
@@ -332,8 +414,8 @@ claim "the statistical layer works on its own" honest and checkable.
 |---|---|
 | `logs` | Raw entries. Indexed on `(service, timestamp)` — every detection query is time-windowed. |
 | `metrics_rollup` | Per-minute aggregates so detection reads cheap summaries, not millions of rows. |
-| `anomalies` | Tier 1 output (window + triggers), enriched by Tier 2 (severity, summary, `is_real_incident`). Benign windows end up `dismissed`. |
-| `correlations` | Suspected commit, confidence, reasoning. |
+| `anomalies` | Tier 1 output (window + triggers), enriched by Tier 2 (severity, summary, `is_real_incident`, `affected_area`). Benign windows end up `dismissed`. |
+| `correlations` | Suspected commit, confidence, reasoning, implicated files. A **null** sha is still a row — "considered and declined" is a finding, and it must stay distinguishable from "never ran". |
 | `hypotheses` | Root cause and suggested fix. `applied` stays `false` — human gate. |
 | `llm_calls` | Tokens and latency per call. This is what substantiates the two-tier cost claim. |
 
@@ -343,6 +425,12 @@ claim "the statistical layer works on its own" honest and checkable.
 
 ```bash
 pnpm typecheck            # strict TS across all packages
+pnpm correlate            # Phase 3 — which commit, or none
+pnpm correlate --preview  # the exact correlation prompt, no call
+pnpm correlate --stats    # the correlation funnel
+
+bash scripts/build-fixture-repo.sh    # the repo correlation reads
+
 pnpm test                 # 129 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
