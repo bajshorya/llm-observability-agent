@@ -22,8 +22,7 @@
  * `defaultLookback` is 48 hours and 25 commits, whichever binds first. That is
  * wide enough to cover a bug that shipped Friday and surfaced under Monday
  * load, and narrow enough that a typical result is a page of text. Both are
- * arguments, not measurements — six golden cases cannot tune them, and tuning
- * them against six cases would mean nothing. They are stated here so the next
+ * arguments, not measurements — four correlation cases cannot tune them. They are stated here so the next
  * person can disagree with a number rather than discover one.
  *
  * WHY `until` IS THE END OF THE ANOMALY WINDOW

@@ -325,6 +325,13 @@ export interface RenderedCorrelationContext {
   service: string;
   candidateCount: number;
   context: string;
+  /**
+   * The commits the packet was built from. Returned so that capturing a golden
+   * case can resolve an abbreviated expected sha against the very candidates
+   * that case will contain, rather than against whatever the repository holds
+   * at some later moment.
+   */
+  commits: readonly CandidateCommit[];
 }
 
 /**
@@ -355,6 +362,7 @@ export async function renderContextForIncident(
     service: incident.service,
     candidateCount: input.commits.commits.length,
     context: renderCorrelationContext(input),
+    commits: input.commits.commits,
   };
 }
 
