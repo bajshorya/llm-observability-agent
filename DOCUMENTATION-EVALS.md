@@ -1060,38 +1060,140 @@ produced.
 
 ---
 
-## 14. What this harness does not yet cover
+## 14. The correlation eval, and its first result
 
-Everything above measures **Tier 2 only**. The golden set scores a classifier:
-severity, verdict, and whether `affectedArea` is grounded in the evidence.
+Sections 1–13 measure **Tier 2 only**. This one measures Phase 3.
 
-Phase 3 has since added the inputs for commit correlation — a real fixture
-repository, a validated commit contract, the collector, the evidence packet, the
-prompt and the orchestration — and `pnpm correlate` runs end to end against a
-real model. What it does **not** have is an eval. There is no correlation accuracy in this document because there
-is no measurement to report, and an assertion would be worse than a gap.
+### The set is four cases, and why it is shaped that way
 
-One observed run is not a measurement. `gemini-3.5-flash` named the right commit
-with a stated mechanism and the naive baseline named the wrong one, which is
-encouraging and is n=1 on the positive half. Nothing has tested the `null` path
-— the half that actually distinguishes this tier from its baseline, exactly as
-the benign windows do for Tier 2.
+Only incidents reach correlation — Tier 2 dismisses benign windows and
+`loadPending` filters on `is_real_incident = 1` — so the correlation set cannot
+reuse the classifier's benign half. It is built from incident scenarios where
+the right answer differs:
 
-When the eval exists it will need its own axes, and the split-scorecard lesson
-from §7 applies directly: a model that always names the newest commit would score well
-on a set where the newest commit is always guilty. That is why the fixture
-history in `DOCUMENTATION-PHASE-3.md` §3 is built so the newest commit is
-innocent, three commits touch the same file, and two scenarios have `null` as
-their correct answer.
+| Case | Expected | Why |
+|---|---|---|
+| `new-error` | the pricing commit | A novel `TypeError` on `toFixed`; that commit added the call, on a field that is null whenever no promotion applies |
+| `limiter-misconfig` | the token-bucket commit | Legitimate writes rejected at quota across hundreds of clients; that commit introduced the limiter running the burst and refill the warning reports |
+| `error-spike` | **null** | 40× volume of failures already in the baseline — upstream or load, and no candidate touches the payments path |
+| `latency-jump` | **null** | p95 ×8 with no new signature and no commit touching a latency-sensitive path |
 
-The likely axes:
+**Two attributable cases pointing at DIFFERENT commits is the load-bearing
+detail.** With one, "finds the guilty commit" and "has learned the answer is the
+pricing one" produce identical scores. `limiter-misconfig` was added to the
+generator for this reason, and it is the only scenario whose primary job is
+correlation rather than classification.
 
-| Axis | Why it is separate |
+**Both decline cases are offered six candidates.** A decline scored against an
+empty candidate list would measure nothing.
+
+### The scorecard splits four ways
+
+| Axis | Question |
 |---|---|
-| correct sha when one exists | the positive case |
-| `null` when no commit explains it | the case a model will not volunteer |
-| implicated files within the chosen commit | a right sha for the wrong reason is still wrong |
-| confidence calibrated against correctness | a confidently wrong correlation is the worst output this system can produce |
+| named the right commit | of the cases where one is responsible, how many were right |
+| declined when it should | of the cases where none is, how many said so |
+| right files within it | scored only on correctly attributed cases |
+| confidence | mean when right, versus mean when wrong |
 
-Reporting those blended into one number would hide exactly what the classifier's
-split scorecard was built to expose.
+The first two are **never averaged**, for the reason §7 already found the hard
+way. A model that names the newest commit every time scores 100% and 0%; one
+that always declines scores the reverse. Blended, both read as "about half" —
+indistinguishable from a model that is genuinely half right, and each is a
+completely different failure.
+
+Files are scored only where they can mean something. Inside a wrong commit they
+are already counted by the attribution axis, and counting them twice would make
+this axis a noisy echo of that one. The check is a **subset**, not an exact
+match: naming an extra file the commit really touched is breadth, not error —
+the same reasoning that scores severity within one band.
+
+### The result
+
+```
+                            gemini-3.5-flash        stub (baseline)
+  named the right commit    2/2   100%              0/2     0%
+  declined when it should   1/2    50%              0/2     0%
+  right files within it     2/2   100%              0/0    n/a
+  confidence when right     0.92  when wrong 0.60   n/a    when wrong 0.25
+  cost                      7028 in / 716 out, 0 repairs, mean 3307ms
+```
+
+**The baseline is 0/2 and 0/2.** It blames the newest commit, which the fixture
+history is built so that it is never the answer — and it also names a commit on
+both decline cases. That is the correlation-stage equivalent of the classifier
+stub's 0/3 on the benign half: not a deficiency to fix, but the number that
+makes the claim falsifiable.
+
+**Attribution is 2/2 across two different commits**, so the model is not
+pattern-matching one answer. It also named the right files inside both.
+
+### The failure is the interesting half
+
+`latency-jump` was attributed to the token-bucket commit at 0.60 confidence. Its
+stated reasoning:
+
+> Commit 8ef033668c introduced a per-client token bucket rate limiter on write
+> paths … **If** the rate-limiting middleware uses a blocking or unoptimized
+> storage mechanism (such as synchronous Redis calls or in-memory locks) to
+> track token buckets, it can introduce severe latency bottlenecks…
+
+There is no Redis anywhere in the evidence. The commit body **in the packet**
+says the opposite — "Rejection is immediate and does no work, so a flooding
+client cannot degrade latency for anyone else." The model invented an
+implementation detail and reasoned from it: precisely the "mechanism, not a
+coincidence" failure the prompt warns against, and a mechanism no reviewer could
+check against the diff.
+
+Re-running the case reproduced the same answer and the same confidence, so this
+is stable behaviour rather than sampling noise.
+
+**Two things about it are worth separating.** The confidence was *correctly*
+lower — 0.60 against 0.92 on the cases it got right — so calibration is working;
+the model knew this was weaker. What it did not do was decline. And the prompt's
+own bands permit that: 0.5–0.8 is defined as "the mechanism is inferred rather
+than visible in the evidence", which is an accurate description of what it did.
+
+So the honest reading is that the model followed the prompt, and the prompt
+allows naming a commit on an inferred mechanism. Whether it should — whether
+that band ought to require a mechanism *visible in the evidence* — is a real
+design question.
+
+**It has deliberately not been changed.** Four cases is not enough signal to
+justify a prompt edit, and a prompt rewritten against the run that exposed it
+would score better on that run and mean nothing. This is the same rule that kept
+the classifier prompt byte-for-byte unchanged through runs that scored badly.
+The finding is recorded; the fix waits for evidence.
+
+### What this does not establish
+
+Four cases, one application shape, one model, one run. Enough to show the tier
+beats its baseline on three axes and to expose one repeatable failure mode. Not
+enough to rank two competent models, and the decline half is **2 cases** — the
+thinnest part of the set and the half that matters most, exactly as the benign
+half does for Tier 2.
+
+Reasoning quality is still not measured. `reasoning` is printed for wrong
+answers, because the answer is as often a bad label as a bad model — two of the
+six classifier labels were found that way — but grading prose needs a human or a
+second model marking the first one's homework, and a number nobody should trust
+is worse than no number.
+
+---
+
+## 15. Adding a correlation case
+
+1. Add the scenario to `SCENARIO_NAMES` and `SCENARIOS` in the generator with
+   `benign: false` — a benign scenario is dismissed by Tier 2 and never reaches
+   correlation.
+2. Give it evidence that links to a commit, or deliberately does not. The link
+   should be checkable, not given away: no sha in any log line.
+3. Verify it trips Tier 1 *and* that Tier 2 confirms it. If either fails, the
+   case tests nothing, and `capture-correlation-cases.sh` says so loudly.
+4. Add it to that script with `--sha <sha|none>` and a `--note` that argues for
+   the label.
+
+`--sha` is resolved against the candidates in the packet being captured, and
+capture fails if it matches none. A case expecting a commit its own evidence
+does not contain would score every model wrong forever and look like a model
+problem rather than a labelling one.

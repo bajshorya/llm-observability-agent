@@ -1,4 +1,4 @@
-# Phase 3 — Commit Correlation (in progress)
+# Phase 3 — Commit Correlation
 
 Phase 2 ends with rows in `anomalies` that are real, described and prioritised:
 `is_real_incident = 1`, a severity, a plain-English summary, an affected area,
@@ -7,10 +7,9 @@ this?**
 
 This document covers what has been built so far: the decision that was blocking
 the phase, the target repository, the commit contract, the collector, the
-evidence packet, the prompt and the orchestration. The stage runs end to end.
-What is **not** built is the correlation eval — so there is one observed run and
-no measurement. §12 is the honest inventory; §13 is the one decision still
-outstanding.
+evidence packet, the prompt, the orchestration and the eval. **Phase 3 is
+complete and measured.** The result — and the one repeatable failure it exposed
+— is in `DOCUMENTATION-EVALS.md` §14; §12 is the inventory.
 
 ---
 
@@ -268,9 +267,10 @@ that answer would look exactly as confident as a correct one. Loud is better.
 enough to cover a bug that shipped Friday and surfaced under Monday load; narrow
 enough that a typical result is a page of text.
 
-**Both numbers are arguments, not measurements.** Six golden cases cannot tune
-them, and tuning them against six cases would mean nothing — the same reasoning
-that keeps the classifier prompt unchanged. They are stated in the file header
+**Both numbers are arguments, not measurements.** The correlation set is four
+cases; tuning a bound against four cases would mean nothing — the same reasoning
+that keeps both prompts unchanged, and that left the `latency-jump` failure
+written up rather than patched. They are stated in the file header
 so the next person can disagree with a number rather than discover one.
 
 ### `--until` is the end of the anomaly window
@@ -633,6 +633,11 @@ than defaulting to the latest incident.
 | `backend/src/correlation/cli.ts` | 239 | — | `pnpm correlate` |
 | `backend/src/correlation/prompt.test.ts` | 92 | — | 6 cases guarding prompt discipline |
 | `backend/src/correlation/grounding.test.ts` | 162 | — | 11 cases, hallucinations included |
+| `backend/src/eval/correlation-cases.ts` | 123 | contract | the correlation case schema, loading, saving |
+| `backend/src/eval/score-correlation.ts` | 197 | **pure** | the four axes |
+| `backend/src/eval/run-correlation.ts` | 96 | impure | the cases through a provider |
+| `backend/src/eval/score-correlation.test.ts` | 232 | — | 21 cases over the scoring rules |
+| `scripts/capture-correlation-cases.sh` | 146 | — | rebuilds the correlation set |
 | `scripts/build-fixture-repo.sh` | 503 | — | the target repository |
 
 Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
@@ -648,9 +653,9 @@ Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
 
 ## 11. Verified behaviour
 
-`pnpm typecheck` clean. **129 tests pass**, up from 81 — 15 for the parser, 13
-for the packet, 6 for prompt discipline, 11 for grounding and 4 for the stub's
-new baseline. None of them touch a filesystem or a database.
+`pnpm typecheck` clean. **150 tests pass**, up from 81 — 15 for the parser, 13
+for the packet, 6 for prompt discipline, 11 for grounding, 4 for the stub's new
+baseline and 21 for the correlation scorer. None touch a filesystem or database.
 
 The collector against the real fixture, for the golden window ending
 `2026-08-16T19:02Z`:
@@ -709,17 +714,34 @@ Both wrote a row, resolved the 10-character answer back to the full 40-character
 sha, and moved status to `correlated`. Re-running reported nothing to do. Cost
 was attributed per agent in `llm_calls`.
 
-### What that run is not
+### And the measured result
 
-**It is one case, on the positive half, with n=1.** It is an existence proof
-that the stage runs end to end and that a capable model can find the mechanism —
-not a measurement of how often it does.
+The eval exists now: four cases, two attributable to **different** commits, two
+where the correct answer is `null` and six candidates are offered anyway.
 
-Nothing here tests the `null` path, which is the half that actually
-distinguishes this tier from the baseline, exactly as the benign windows do in
-Tier 2. There is still no correlation eval and no scorecard, so this document
-contains no accuracy figure. §10 of `DOCUMENTATION-EVALS.md` is what that claim
-will have to look like when it exists.
+```
+                            gemini-3.5-flash        stub (baseline)
+  named the right commit    2/2   100%              0/2     0%
+  declined when it should   1/2    50%              0/2     0%
+  right files within it     2/2   100%              0/0    n/a
+  confidence when right     0.92  when wrong 0.60   n/a    when wrong 0.25
+```
+
+The baseline scores zero on both accuracy axes — the fixture history is built so
+"blame the newest commit" is never right, and it names a commit on both decline
+cases too.
+
+**`latency-jump` is the failure, and it is stable.** The model attributed it to
+the token-bucket commit on a mechanism it invented — "*if* the middleware uses
+synchronous Redis calls or in-memory locks" — when the commit body in its own
+packet says rejection does no work. Its confidence was correctly lower (0.60 vs
+0.92), so calibration is working; it simply did not decline. Full analysis, and
+why the prompt was **not** changed in response, in `DOCUMENTATION-EVALS.md` §14.
+
+Four cases, one application shape, one model. Enough to show the tier beats its
+baseline on three axes and to expose one repeatable failure. Not enough to rank
+two competent models, and the decline half is two cases — the thinnest part of
+the set and the half that matters most.
 
 ---
 
@@ -734,13 +756,14 @@ will have to look like when it exists.
 | `correlation/prompt.ts` — `CORRELATOR_SYSTEM_PROMPT` | ✅ Built |
 | `correlation/correlate.ts` — orchestration, persistence | ✅ Built |
 | `pnpm correlate` CLI | ✅ Built |
-| Golden cases for correlation | Not built |
+| Golden cases for correlation | ✅ Built — 4 cases |
+| Correlation eval and scorecard | ✅ Built — `pnpm eval --correlation` |
 | `correlations` table | ✅ Written by `correlate.ts` |
 
-What remains is the eval: golden cases for correlation, and a scorecard split
-across the four axes in `DOCUMENTATION-EVALS.md` §14. Until that exists the
-phase has one observed run and no measurement, which is the gap that matters
-most now.
+Nothing remains in Phase 3. What remains is *more of it*: the decline half is
+two cases, which is the thinnest and most important part of the set, and the
+`latency-jump` failure is a real finding waiting on enough evidence to justify
+acting on it.
 
 ---
 

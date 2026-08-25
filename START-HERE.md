@@ -41,7 +41,7 @@ propose a fix.
                                             ▼
         TIER 3  commit correlation                 in progress
         which commit did this, or none?
-        runs end to end · no eval yet, so no measured accuracy
+        2/2 attribution · 1/2 declining · baseline 0/2 and 0/2
 ```
 
 The funnel is the whole point. Tier 1 is free and can run every 30 seconds.
@@ -66,7 +66,7 @@ why the default provider is an offline stub.
 In every module, the logic that decides things has no database, clock, or I/O —
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `grounding.ts`. The
 code that touches the database is separate — `engine.ts`, `rollup.ts`,
-`classify.ts`, `calls.ts`. That split is why 129 tests run in 300ms with no
+`classify.ts`, `calls.ts`. That split is why 150 tests run in 300ms with no
 fixtures — including a `git log` parser tested entirely on strings, with no
 repository anywhere near it. **When you are hunting for logic, it is in a pure file.**
 
@@ -114,8 +114,8 @@ Faster than the docs for most questions. The whole system is ~8,100 lines.
 packages/shared/        The contract. Zod schemas + signature normalisation.
                         Read schemas/ first — it defines every shape in the system.
 
-packages/generator/     Synthetic traffic. scenarios.ts holds all six scenarios;
-                        three are real incidents, three should be dismissed.
+packages/generator/     Synthetic traffic. scenarios.ts holds all seven scenarios;
+                        four are real incidents, three should be dismissed.
 
 packages/backend/src/
   routes/ingest.ts      Validate and persist. Deliberately dumb.
@@ -166,6 +166,7 @@ want the extended reasoning behind a particular decision.
 | How do I add another LLM provider? | `PHASE-2` §4 |
 | Why would an anomaly be dismissed? | `PHASE-2` §9 and `EVALS` §3 |
 | Is the classifier any good? | `EVALS` §8–10 |
+| Is the correlator any good? | `EVALS` §14 |
 | Which commit caused it? | `PHASE-3` §1, §5 |
 | Where do the fixture commits come from? | `PHASE-3` §3 |
 | What does the correlator actually see? | `PHASE-3` §7–8 |
@@ -298,10 +299,14 @@ Getting there took being wrong twice: two of the six labels were mine to fix, an
 one addition to the evidence packet made a case worse before a second one fixed
 it. That sequence is the more interesting half of the story.
 
-**Phase 3 has no such number yet, and the docs do not pretend otherwise.**
-`pnpm correlate` runs end to end, and in one observed run a capable model named
-the right commit with a stated mechanism while the naive baseline named the
-wrong one. That is n=1 on the positive half. Nothing has tested the `null` path
-— which, by idea 6 above, is the half that would actually distinguish the tier
-from its baseline. Until there is an eval, treat the correlation stage as built
-and unmeasured.
+**Phase 3 now has its own number, and it is a more interesting one.** On four
+cases the model names the right commit 2/2 — across two *different* commits, so
+it is not pattern-matching — and declines 1/2. The "blame the newest commit"
+baseline scores 0/2 and 0/2.
+
+The miss is the part worth reading. Given a latency incident no commit explains,
+the model invented an implementation detail its own evidence contradicts and
+named a commit rather than declining, repeatably. By idea 6 above that is the
+half that matters, and it has **not** been fixed by editing the prompt — four
+cases cannot justify that, and a prompt fitted to the run that exposed it would
+mean nothing. `EVALS` §14.

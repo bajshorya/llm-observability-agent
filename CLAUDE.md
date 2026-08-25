@@ -37,15 +37,14 @@ Phases 0–2 are done: ingestion, storage, the three Tier 1 detectors, the LLM
 provider layer, the Tier 2 classifier, cost logging, and a golden-set eval
 harness.
 
-Phase 3 is **in progress**. Built: the target repository (`scripts/build-fixture-repo.sh`),
-the commit contract, the collector, the evidence packet, the prompt and the
-orchestration (`backend/src/correlation/`). `pnpm correlate` runs end to end.
-Not built: the correlation eval and its golden cases. **There is one observed
-run and no measurement**, so the phase has no accuracy figure — see
-`DOCUMENTATION-PHASE-3.md` §11–12.
+Phase 3 is **done and measured**: the target repository, the commit contract,
+the collector, the evidence packet, the prompt, the orchestration and a
+four-case eval. On `gemini-3.5-flash` it names the right commit 2/2 across two
+different commits and declines 1/2; the "blame the newest commit" baseline
+scores 0/2 and 0/2. The one failure is repeatable and is written up rather than
+patched — `DOCUMENTATION-EVALS.md` §14.
 
-Phases 4 (root-cause agent) and 5 (dashboard) are not built — their tables and
-Zod contracts exist, no code.
+Phases 4 (root-cause agent) and 5 (dashboard) are not built.
 
 The two-tier claim is **measured, not asserted**: on `gemini-3.5-flash` the
 golden set scores 6/6 on every axis, stably; the statistical baseline scores 0/3
@@ -54,7 +53,7 @@ on the benign half. See `DOCUMENTATION-EVALS.md` §10.
 ## Commands
 
 ```bash
-pnpm typecheck && pnpm test        # 129 tests, ~300ms, no network
+pnpm typecheck && pnpm test        # 150 tests, ~300ms, no network
 pnpm backend                       # ingestion API on :4000
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -62,7 +61,8 @@ pnpm detect                        # Tier 1 — free, never calls a model
 pnpm classify --preview <id>       # the exact prompt, calls nothing
 pnpm correlate                     # Phase 3 — which commit, or none
 pnpm correlate --preview           # the exact prompt, calls nothing
-pnpm eval --provider gemini        # score the golden set
+pnpm eval --provider gemini        # score the classifier golden set
+pnpm eval --correlation            # score the correlation set (4 cases)
 
 bash scripts/build-fixture-repo.sh # the repo Phase 3 correlates against
 ```
@@ -105,8 +105,12 @@ plus any experimentation exhausts one model's budget. When you get a 429, point
 `LLM_MODEL` at a different model rather than waiting — the retry hint in the
 error is misleading.
 
-**Do not tune the prompt against the eval.** `correlation/prompt.test.ts` now
-enforces this for the correlator — it fails if a fixture identifier, a sha or a
+**Do not tune the prompt against the eval.** This has already been tested once:
+the correlation eval exposed a repeatable failure (`latency-jump`, see
+`DOCUMENTATION-EVALS.md` §14) that a prompt edit would plausibly fix. It was
+written up and left alone, because four cases cannot justify the edit and a
+prompt rewritten against the run that exposed it would mean nothing.
+`correlation/prompt.test.ts` also enforces this mechanically for the correlator — it fails if a fixture identifier, a sha or a
 worked example appears in the prompt. The classifier prompt has no such guard
 and relies on this note.
  Six cases is not enough signal; a

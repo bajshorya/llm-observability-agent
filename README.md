@@ -38,15 +38,15 @@ later one wins — `START-HERE.md` lists the known cases.
 | **0** | Scaffold, schema, log generator, ingestion | ✅ Done |
 | **1** | Rollup worker + Tier 1 statistical detectors (no LLM) | ✅ Done |
 | **2** | Tier 2 LLM classifier, provider layer, cost logging | ✅ Done |
-| 3 | Commit correlation agent | 🚧 Runs end to end; no eval yet |
+| **3** | Commit correlation agent | ✅ Done |
 | 4 | Root-cause + fix agent (human-gated) | |
 | 5 | Next.js dashboard with reasoning trace | |
 
-`pnpm correlate` runs end to end. In one observed run `gemini-3.5-flash` named
-the right commit with a stated mechanism while the naive baseline named the
-wrong one — but that is **n=1 on the positive half**. There is no correlation
-eval, nothing tests the `null` path, and so no accuracy figure exists.
-`DOCUMENTATION-PHASE-3.md` §11–12 is the honest inventory.
+Phase 3 is measured on a four-case set: `gemini-3.5-flash` names the right
+commit 2/2 across two different commits and declines 1/2, against a
+"blame-the-newest" baseline that scores 0/2 and 0/2. The one failure is
+repeatable and is written up rather than patched — see `DOCUMENTATION-EVALS.md`
+§14.
 
 ---
 
@@ -108,7 +108,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 129 unit tests; 27 of them over the detectors and stats
+pnpm test                   # 150 unit tests; 27 of them over the detectors and stats
 ```
 
 A firing window looks like this:
@@ -255,11 +255,25 @@ named commit is dropped and reported. Zod proves the answer is well-*formed*; it
 cannot prove it is *true to the evidence*, and a hallucinated sha would be
 inherited by Phase 4 as established fact.
 
-**No measurement yet.** In one observed run the model above named the right
-commit and the naive baseline named the wrong one. That is n=1 on the positive
-half — nothing has tested the `null` path, which is the half that actually
-distinguishes this tier from its baseline. There is no correlation eval, so
-there is no accuracy figure.
+**It is measured, on four cases.**
+
+```
+                            gemini-3.5-flash        stub (baseline)
+  named the right commit    2/2   100%              0/2     0%
+  declined when it should   1/2    50%              0/2     0%
+  right files within it     2/2   100%              0/0    n/a
+  confidence when right     0.92  when wrong 0.60   n/a    when wrong 0.25
+```
+
+The two accuracy rows are never averaged: a model that always names something
+scores 100% and 0%, one that always declines scores the reverse, and blended
+both read as a respectable half.
+
+The `latency-jump` miss is repeatable and is the more interesting half of the
+result — the model invented an implementation detail the evidence contradicts.
+It has **not** been fixed by editing the prompt, because four cases cannot
+justify that and a prompt fitted to the run that exposed it would mean nothing.
+`DOCUMENTATION-EVALS.md` §14 has the full analysis.
 
 ---
 
@@ -429,9 +443,12 @@ pnpm correlate            # Phase 3 — which commit, or none
 pnpm correlate --preview  # the exact correlation prompt, no call
 pnpm correlate --stats    # the correlation funnel
 
+pnpm eval --correlation               # score the correlation set
+pnpm eval --correlation --provider stub   # the blame-the-newest baseline
+
 bash scripts/build-fixture-repo.sh    # the repo correlation reads
 
-pnpm test                 # 129 unit tests, no network required
+pnpm test                 # 150 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
   WHERE error_signature IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;"
