@@ -70,8 +70,15 @@ export type CorrelationGroundingResult =
  * Resolve a possibly-abbreviated sha against the candidates the model was
  * shown. Returns null when it matches none, and treats an ambiguous prefix as
  * a non-match — see the header.
+ *
+ * Exported because capturing a golden case needs exactly the same resolution:
+ * a case whose expected sha is not in its own packet would be unsatisfiable
+ * and would score every model wrong forever.
  */
-function resolveSha(answer: string, candidates: readonly CandidateCommit[]): string | null {
+export function resolveCandidateSha(
+  answer: string,
+  candidates: readonly CandidateCommit[],
+): string | null {
   const needle = answer.trim().toLowerCase();
   const matches = candidates.filter((commit) => commit.sha.startsWith(needle));
 
@@ -102,7 +109,7 @@ export function groundCorrelation(
     };
   }
 
-  const sha = resolveSha(correlation.suspectedCommitSha, candidates);
+  const sha = resolveCandidateSha(correlation.suspectedCommitSha, candidates);
 
   if (sha === null) {
     // Fatal. See the header: coercing this to null would record a

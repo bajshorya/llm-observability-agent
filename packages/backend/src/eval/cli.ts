@@ -41,6 +41,11 @@
  */
 
 import { parseArgs } from "node:util";
+import { renderContextForIncident } from "../correlation/correlate";
+import { resolveCandidateSha } from "../correlation/grounding";
+import { loadCorrelationCases, saveCorrelationCase, type CorrelationCase } from "./correlation-cases";
+import { runCorrelationEval } from "./run-correlation";
+import type { CorrelationCaseScore, CorrelationSummary } from "./score-correlation";
 import { severities, type Severity } from "@obs/shared";
 import { renderContextForAnomaly } from "../classification/classify";
 import { env, llmProviderNames, type LlmProviderName } from "../env";
@@ -61,7 +66,17 @@ Options:
   --list              List the golden set and exit
   --show <name>       Print a case's evidence packet and exit
   --capture <name>    Save the newest anomaly as a golden case (see below)
+  --correlation       Operate on the Phase 3 correlation set instead
   -h, --help          Show this message
+
+Correlation mode (--correlation) takes the same --provider, --case, --list and
+--show, and captures with --sha <sha|none> --files a,b --note "...":
+
+  pnpm eval --correlation
+  pnpm eval --correlation --provider stub      # blame-the-newest baseline
+  pnpm eval --correlation --capture new-error --sha 0c701a0 \\
+            --files src/lib/pricing.js --note "the null-price bug"
+
 
 Capturing a case:
   pnpm generate inject --scenario deploy-restart --minutes 5
@@ -140,6 +155,200 @@ function parseSeverity(value: string | undefined): Severity {
   );
 }
 
+/**
+ * Capture a correlation case.
+ *
+ * `--sha` is resolved against the very candidates this case will contain, and
+ * throws when it matches none. A case whose expected sha is absent from its own
+ * packet is unsatisfiable — it would score every model wrong forever, and look
+ * like a model failure rather than a labelling one.
+ */
+async function captureCorrelation(
+  values: Record<string, string | boolean | undefined>,
+): Promise<void> {
+  const name = values["capture"] as string;
+  const sha = values["sha"] as string | undefined;
+
+  if (sha === undefined) {
+    throw new Error(`--sha is required: a full or abbreviated sha, or "none" for a decline case`);
+  }
+
+  const rendered = await renderContextForIncident();
+  if (!rendered) {
+    throw new Error(
+      "No real incidents in the database. Inject a scenario, then run `pnpm detect` and `pnpm classify`.",
+    );
+  }
+
+  let expected: string | null = null;
+  if (sha !== "none") {
+    expected = resolveCandidateSha(sha, rendered.commits);
+    if (expected === null) {
+      throw new Error(
+        `--sha "${sha}" matches none of the ${rendered.commits.length} candidate(s) in this packet. ` +
+          `A case cannot expect a commit its own evidence does not contain.`,
+      );
+    }
+  }
+
+  const files = (values["files"] as string | undefined)
+    ?.split(",")
+    .map((path) => path.trim())
+    .filter((path) => path.length > 0);
+
+  if (expected === null && files && files.length > 0) {
+    throw new Error("--files cannot be set on a decline case: there is no commit to own them");
+  }
+
+  const golden: CorrelationCase = {
+    name,
+    scenario: (values["scenario"] as string | undefined) ?? name,
+    capturedAt: new Date().toISOString(),
+    expect: {
+      suspectedCommitSha: expected,
+      implicatedFiles: files ?? [],
+      note: (values["note"] as string | undefined) ?? "",
+    },
+    context: rendered.context,
+  };
+
+  const path = saveCorrelationCase(golden);
+  console.log(`Captured correlation case "${name}" from anomaly ${rendered.anomalyId.slice(0, 8)}`);
+  console.log(
+    `  expect: ${expected ? expected.slice(0, 10) : "no commit"} from ${rendered.commits.length} candidate(s)`,
+  );
+  console.log(`  ${golden.context.split("\n").length} lines of evidence -> ${path}`);
+}
+
+function reportCorrelationCase(score: CorrelationCaseScore): void {
+  const mark = score.attributionCorrect ? "ok  " : "WRONG";
+  const answer = score.actual.suspectedCommitSha
+    ? score.actual.suspectedCommitSha.slice(0, 10)
+    : "no commit";
+  const want = score.expected.suspectedCommitSha
+    ? score.expected.suspectedCommitSha.slice(0, 10)
+    : "no commit";
+
+  console.log(
+    `  ${mark} ${score.name.padEnd(18)} said ${answer.padEnd(11)} want ${want.padEnd(11)} ` +
+      `conf ${score.actual.confidence.toFixed(2)}`,
+  );
+
+  if (score.filesCorrect === false) {
+    console.log(`       missed file(s): ${score.missingFiles.join(", ")}`);
+  }
+
+  /**
+   * The reasoning is printed for wrong answers only, and it is the first thing
+   * to read when a score looks wrong — because the answer is as often a bad
+   * LABEL as a bad model. Two of the six classifier labels turned out to be
+   * mine to fix, and both were found this way.
+   */
+  if (!score.attributionCorrect) {
+    console.log(`       why: ${score.actual.reasoning}`);
+    console.log(`       label: ${score.expected.note}`);
+  }
+}
+
+function reportCorrelationSummary(summary: CorrelationSummary): void {
+  const pct = (correct: number, total: number): string =>
+    total === 0 ? "  n/a" : `${Math.round((correct / total) * 100)}%`.padStart(5);
+
+  const conf = (value: number | null): string => (value === null ? "n/a" : value.toFixed(2));
+
+  console.log("");
+  console.log("Scorecard:");
+  console.log(
+    `  named the right commit    ${summary.attributions.correct}/${summary.attributions.total}  ` +
+      `${pct(summary.attributions.correct, summary.attributions.total)}`,
+  );
+  console.log(
+    `  declined when it should   ${summary.declines.correct}/${summary.declines.total}  ` +
+      `${pct(summary.declines.correct, summary.declines.total)}`,
+  );
+  console.log(
+    `  right files within it     ${summary.files.correct}/${summary.files.total}  ` +
+      `${pct(summary.files.correct, summary.files.total)}`,
+  );
+  console.log(
+    `  confidence when right     ${conf(summary.confidence.whenCorrect)}   ` +
+      `when wrong ${conf(summary.confidence.whenWrong)}`,
+  );
+
+  if (summary.failures > 0) {
+    console.log(`  no valid answer           ${summary.failures}`);
+  }
+
+  console.log(
+    `  cost                      ${summary.totalInputTokens} in / ${summary.totalOutputTokens} out, ` +
+      `${summary.totalRepairs} repair(s), mean ${summary.meanLatencyMs}ms`,
+  );
+  console.log("");
+  console.log(
+    "The two accuracy rows are never averaged. A model that names the newest commit",
+  );
+  console.log(
+    "every time scores 100% on the first and 0% on the second; one that always",
+  );
+  console.log("declines scores the reverse. Blended, both read as 'about half'.");
+}
+
+async function runCorrelationMode(
+  values: Record<string, string | boolean | undefined>,
+): Promise<void> {
+  if (values["list"]) {
+    const cases = loadCorrelationCases();
+    console.log(`${cases.length} correlation case(s):`);
+    for (const golden of cases) {
+      const want = golden.expect.suspectedCommitSha
+        ? golden.expect.suspectedCommitSha.slice(0, 10)
+        : "no commit ";
+      console.log(`  ${golden.name.padEnd(18)} ${want}  ${golden.expect.note}`);
+    }
+    return;
+  }
+
+  if (typeof values["show"] === "string") {
+    const [golden] = loadCorrelationCases(values["show"]);
+    console.log(golden ? golden.context : `No correlation case named "${values["show"]}"`);
+    return;
+  }
+
+  const cases = loadCorrelationCases(values["case"] as string | undefined);
+  if (cases.length === 0) {
+    console.log(
+      "The correlation golden set is empty. Capture one with:\n" +
+        "  pnpm eval --correlation --capture <name> --sha <sha|none> --note '...'",
+    );
+    return;
+  }
+
+  const providerName = values["provider"] as LlmProviderName | undefined;
+  if (providerName && !llmProviderNames.includes(providerName)) {
+    throw new Error(`Unknown provider "${providerName}".`);
+  }
+
+  const provider = providerName ? createProvider(providerName) : createProvider();
+  console.log(
+    `Evaluating ${cases.length} correlation case(s) against ${provider.name} (${provider.model}):\n`,
+  );
+
+  const run = await runCorrelationEval(provider, cases, reportCorrelationCase);
+
+  for (const failure of run.failures) {
+    console.log(`  FAIL ${failure.name.padEnd(18)} no valid answer — ${failure.error}`);
+  }
+
+  reportCorrelationSummary(run.summary);
+
+  const wrong =
+    run.summary.attributions.total -
+    run.summary.attributions.correct +
+    (run.summary.declines.total - run.summary.declines.correct);
+
+  if (wrong > 0 || run.failures.length > 0) process.exitCode = 1;
+}
+
 async function capture(values: Record<string, string | boolean | undefined>): Promise<void> {
   const name = values["capture"] as string;
   const expect = values["expect"];
@@ -183,12 +392,26 @@ async function main(): Promise<void> {
       severity: { type: "string" },
       scenario: { type: "string" },
       note: { type: "string" },
+      correlation: { type: "boolean" },
+      sha: { type: "string" },
+      files: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
 
   if (values.help) {
     console.log(USAGE);
+    return;
+  }
+
+  // `--correlation` switches the whole command to the Phase 3 set: list, show,
+  // capture and run all operate on correlation cases instead.
+  if (values.correlation) {
+    if (values.capture) {
+      await captureCorrelation(values);
+      return;
+    }
+    await runCorrelationMode(values);
     return;
   }
 
