@@ -1,6 +1,6 @@
 /**
  * Synthetic traffic for a fake orders service — the healthy baseline and all
- * six injectable scenarios.
+ * seven injectable scenarios.
  *
  * WHAT THIS FILE DOES
  * Everything about what the generated traffic looks like. `generateMinute()` is
@@ -20,15 +20,23 @@
  * in normal operation — timeouts, 404s and 429s. Those baseline errors are what
  * the new-signature detector must NOT flag as novel.
  *
- * THE SIX SCENARIOS, AND THE SPLIT THAT MATTERS
- * Three are real incidents; three are benign windows that trip Tier 1 anyway.
+ * THE SEVEN SCENARIOS, AND THE SPLIT THAT MATTERS
+ * Four are real incidents; three are benign windows that trip Tier 1 anyway.
  *
  *   error-spike        incident  40× error rate from known failure kinds
  *   latency-jump       incident  p95 ×8 across every endpoint, no new errors
  *   new-error          incident  a novel TypeError returning 500s
+ *   limiter-misconfig  incident  a rate limiter rejecting legitimate traffic
  *   deploy-restart     BENIGN    a burst that recovers inside the window
  *   batch-job          BENIGN    a background path is slow; users are fine
  *   rate-limit-storm   BENIGN    one client throttled; nothing else degrades
+ *
+ * `limiter-misconfig` was added for Phase 3 rather than Phase 2, and it is the
+ * only scenario whose primary job is CORRELATION. Its cause is a different
+ * commit from `new-error`'s, which is what stops the correlation eval from
+ * being satisfiable by a model that has learned to answer "the pricing one".
+ * It is also the sharpest pair with `rate-limit-storm`: the same mechanism,
+ * the same status code, opposite verdicts.
  *
  * The benign three exist to test the only thing Tier 2 can do that statistics
  * cannot. `deploy-restart` is the sharpest: it fires the SAME TWO DETECTORS at
@@ -124,6 +132,7 @@ export const SCENARIO_NAMES = [
   "deploy-restart",
   "batch-job",
   "rate-limit-storm",
+  "limiter-misconfig",
 ] as const;
 export type ScenarioName = (typeof SCENARIO_NAMES)[number];
 
@@ -338,6 +347,82 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
    * six-fold, which made "other clients unaffected" a claim the data flatly
    * contradicted.
    */
+  /**
+   * The rate limiter turned on legitimate traffic.
+   *
+   * The exact inverse of `rate-limit-storm`, and deliberately so. There, one
+   * abusive client is throttled and the protection is working; here the
+   * protection is misconfigured and is rejecting ordinary write traffic from
+   * hundreds of clients. Same mechanism, same 429, opposite verdicts — and
+   * nothing in the numbers separates them, because the normalised signature of
+   * a 429 is identical either way.
+   *
+   * WHAT SEPARATES THEM IS ONE NARRATION LINE, in both scenarios. That is not
+   * a shortcut: an operator distinguishes these two situations by reading the
+   * quota warning too. The benign one names a single client and says
+   * "throttling that client only"; this one reports a rejection rate across
+   * hundreds of distinct clients.
+   *
+   * WHY IT EXISTS: CORRELATION, NOT CLASSIFICATION
+   * This is the second scenario whose cause is a real commit in the fixture
+   * repository, and it is a DIFFERENT commit from `new-error`'s. With only one
+   * attributable incident, a correlation eval cannot tell a model that reasons
+   * from one that has learned the answer is always the pricing commit.
+   *
+   * The link is checkable rather than given away: the warning reports the
+   * effective burst and refill the limiter is running with, and one candidate
+   * commit is the one that introduced a token bucket with those numbers. No
+   * sha appears anywhere in the log text.
+   *
+   * WHY 429s STILL TRIP TIER 1
+   * They do not, on their own — 429 is a warning, so the error-rate detector
+   * never sees it, and the normalised signature matches the baseline's. What
+   * fires is the new-signature detector, on the quota warning itself. Exactly
+   * the same route `rate-limit-storm` takes, which is what makes the pair fair.
+   */
+  "limiter-misconfig": {
+    description:
+      "A rate limiter set too tight rejects legitimate writes from hundreds of clients",
+    benign: false,
+    profile: (base) => ({
+      ...base,
+      // Rejecting is cheap, so latency is untouched — the damage is that the
+      // requests never happen, not that they are slow. The error rate here is
+      // the share of traffic the limiter is turning away.
+      errorRate: 0.38,
+    }),
+    error: {
+      // A wide spread of client ids, unlike rate-limit-storm's single one. The
+      // normalised signature is the baseline's, so this reads as volume rather
+      // than novelty — same as the benign case, on purpose.
+      message: (rng) => `Rate limit exceeded for client ${rng.int(1_000, 9_999)}`,
+      errorType: "RateLimitError",
+      statusCode: 429,
+    },
+    context: (_windowStart, rng, progress) => [
+      {
+        level: "warn",
+        message:
+          `Rate limiter rejecting ${rng.int(34, 41)}% of write requests across ` +
+          `${rng.int(1_400, 1_900)} distinct clients in the last minute ` +
+          `(burst 120, refill 2/s)`,
+      },
+      // Still happening at the end of the window. "Already recovering" is the
+      // strongest benign signal there is, and this scenario must not offer it.
+      ...(progress > 0.5
+        ? [
+            {
+              level: "warn" as const,
+              message:
+                "Checkout write failures sustained: /orders and /orders/:id/refund " +
+                "rejecting at quota for 4 consecutive minutes",
+              offsetMs: 30_000,
+            },
+          ]
+        : []),
+    ],
+  },
+
   "rate-limit-storm": {
     description:
       "A single client floods the API and is throttled: 429s, and nothing else degrades",
