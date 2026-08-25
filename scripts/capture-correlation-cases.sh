@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+#
+# Rebuild the correlation golden set from real pipeline runs.
+#
+# Like scripts/capture-cases.sh, each case is CAPTURED rather than written by
+# hand, so the stored prompt is exactly what some real run produced. When the
+# correlation packet changes, the cases have to be rebuilt or the eval scores a
+# prompt the system no longer sends.
+#
+# WHAT IS DIFFERENT FROM THE CLASSIFIER CAPTURE
+#
+# 1. IT NEEDS TIER 2 FIRST. Correlation only sees incidents Tier 2 confirmed, so
+#    every case costs one classification call as well. That is why this script
+#    defaults to a real provider rather than the stub: a packet containing a
+#    stub summary ("no model was called") is not a realistic artefact to score
+#    a correlator against.
+#
+# 2. IT REBUILDS THE FIXTURE WITH --anchor now. The fixture's pinned anchor sits
+#    on the date the classifier cases were captured; traffic generated today
+#    would leave it outside the 48-hour lookback and every packet would say "no
+#    candidates". Anchoring to now gives different shas each run — which is
+#    harmless here, because a correlation case stores its prompt AND its
+#    expected sha together and is therefore self-contained. It does mean the
+#    fixture is left anchored to now; rebuild with no flag to restore.
+#
+# 3. THE LABELS INCLUDE A SHA, AND IT IS CHECKED. `--sha` is resolved against
+#    the candidates in the packet being captured, and capture fails if it
+#    matches none. A case expecting a commit its own evidence does not contain
+#    would score every model wrong forever and look like a model problem.
+#
+#   bash scripts/capture-correlation-cases.sh              # uses LLM_PROVIDER
+#   bash scripts/capture-correlation-cases.sh gemini       # or name one
+#
+set -u
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORK="$REPO/.tmp/capture-correlation"
+PORT=4300
+BASELINE_MINUTES=120
+INJECT_MINUTES=5
+PROVIDER="${1:-}"
+
+cd "$REPO" || exit 1
+mkdir -p "$WORK"
+
+start_backend() {
+  DATABASE_URL="file:$1" PORT=$PORT pnpm --filter @obs/backend start >/dev/null 2>&1 &
+  for _ in $(seq 1 30); do
+    curl -s "localhost:$PORT/health" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  echo "backend failed to start on :$PORT" >&2
+  exit 1
+}
+
+stop_backend() {
+  lsof -ti:$PORT | xargs kill -9 >/dev/null 2>&1
+  sleep 1
+}
+
+# --- the fixture has to overlap traffic generated now ------------------------
+echo "Rebuilding the fixture anchored to now..."
+bash "$REPO/scripts/build-fixture-repo.sh" --anchor now >/dev/null 2>&1
+
+# --- one baseline, reused by every scenario ----------------------------------
+if [ ! -f "$WORK/base.db" ]; then
+  echo "Seeding baseline ($BASELINE_MINUTES min)..."
+  sqlite3 "$REPO/data/dev.db" .schema | sqlite3 "$WORK/base.db"
+  start_backend "$WORK/base.db"
+  INGEST_URL="http://localhost:$PORT/ingest" \
+    pnpm generate backfill --minutes $BASELINE_MINUTES 2>&1 | tail -1
+  stop_backend
+  sqlite3 "$WORK/base.db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
+fi
+
+run_case() {
+  local scenario=$1 sha=$2 files=$3 note=$4
+  local db="$WORK/case-$scenario.db"
+
+  echo ""
+  echo "=== $scenario (expect ${sha})"
+  rm -f "$db" "$db-wal" "$db-shm"
+  cp "$WORK/base.db" "$db"
+
+  start_backend "$db"
+  INGEST_URL="http://localhost:$PORT/ingest" \
+    pnpm generate inject --scenario "$scenario" --minutes $INJECT_MINUTES 2>&1 | tail -1
+  stop_backend
+
+  export DATABASE_URL="file:$db"
+  pnpm detect 2>&1 | grep -E "orders-api|    -"
+
+  if [ "$(sqlite3 "$db" 'SELECT count(*) FROM anomalies')" = "0" ]; then
+    echo "!!! NO ANOMALY — $scenario never reached Tier 2, so it tests nothing"
+    unset DATABASE_URL
+    return 1
+  fi
+
+  # Correlation only sees confirmed incidents, so Tier 2 has to run first.
+  if [ -n "$PROVIDER" ]; then
+    pnpm classify --provider "$PROVIDER" 2>&1 | grep -E "orders-api|    "
+  else
+    pnpm classify 2>&1 | grep -E "orders-api|    "
+  fi
+
+  if [ "$(sqlite3 "$db" 'SELECT count(*) FROM anomalies WHERE is_real_incident = 1')" = "0" ]; then
+    echo "!!! DISMISSED — Tier 2 called $scenario benign, so correlation never sees it"
+    unset DATABASE_URL
+    return 1
+  fi
+
+  local args=(--correlation --capture "$scenario" --scenario "$scenario" --sha "$sha" --note "$note")
+  [ -n "$files" ] && args+=(--files "$files")
+
+  pnpm eval "${args[@]}" 2>&1 | grep -E "Captured|expect|matches none"
+  unset DATABASE_URL
+}
+
+# Labels carry their reasoning in --note, so a disagreement is with a stated
+# argument rather than a bare sha.
+#
+# The two attributable cases point at DIFFERENT commits on purpose. With one,
+# "finds the guilty commit" and "has learned the answer is the pricing one"
+# score identically.
+
+BUG_SHA="$(git -C "$REPO/fixtures/orders-api" log --format=%H --grep='promotional total')"
+LIMITER_SHA="$(git -C "$REPO/fixtures/orders-api" log --format=%H --grep='token bucket')"
+
+run_case new-error "$BUG_SHA" "src/lib/pricing.js" \
+  "The novel TypeError is a null dereference on toFixed; this commit added a call to it on a field that is null whenever no promotion applies"
+
+run_case limiter-misconfig "$LIMITER_SHA" "src/middleware/rateLimit.js" \
+  "Legitimate writes rejected at quota across hundreds of clients; this commit introduced the token bucket running the burst and refill the warning reports"
+
+run_case error-spike none "" \
+  "40x volume of failures that already exist in the baseline — an upstream or load problem, not a code change; no candidate commit touches the payments path"
+
+run_case latency-jump none "" \
+  "p95 degraded across every endpoint with no new error signature and no commit touching a latency-sensitive path; nothing in the diff explains it"
+
+echo ""
+echo "=== captured"
+ls -1 "$REPO/packages/backend/src/eval/correlation-cases/"
+echo ""
+echo "The fixture is left anchored to now. Restore the pinned shas with:"
+echo "  bash scripts/build-fixture-repo.sh"
