@@ -42,10 +42,10 @@ later one wins — `START-HERE.md` lists the known cases.
 | 4 | Root-cause + fix agent (human-gated) | |
 | 5 | Next.js dashboard with reasoning trace | |
 
-Phase 3 is measured on a four-case set: `gemini-3.5-flash` names the right
-commit 2/2 across two different commits and declines 1/2, against a
-"blame-the-newest" baseline that scores 0/2 and 0/2. The one failure is
-repeatable and is written up rather than patched — see `DOCUMENTATION-EVALS.md`
+Phase 3 is measured on a four-case set across three models: attribution is 2/2
+everywhere, declining is 1/2 on both Gemini variants and 0/2 on a 3B local
+model, against a "blame-the-newest" baseline that scores 0/2 and 0/2. The one
+shared failure is written up rather than patched — see `DOCUMENTATION-EVALS.md`
 §14.
 
 ---
@@ -258,22 +258,27 @@ inherited by Phase 4 as established fact.
 **It is measured, on four cases.**
 
 ```
-                            gemini-3.5-flash        stub (baseline)
-  named the right commit    2/2   100%              0/2     0%
-  declined when it should   1/2    50%              0/2     0%
-  right files within it     2/2   100%              0/0    n/a
-  confidence when right     0.92  when wrong 0.60   n/a    when wrong 0.25
+                          gemini-3.5-flash  gemini-2.5-flash  llama3.2 (3B)  stub
+  named the right commit       2/2               2/2              2/2         0/2
+  declined when it should      1/2               1/2              0/2         0/2
+  right files within it        2/2               2/2              2/2         0/0
+  confidence when right       0.92              0.90             0.80         n/a
+             when wrong       0.60              0.70             0.80        0.25
 ```
 
 The two accuracy rows are never averaged: a model that always names something
 scores 100% and 0%, one that always declines scores the reverse, and blended
 both read as a respectable half.
 
-The `latency-jump` miss is repeatable and is the more interesting half of the
-result — the model invented an implementation detail the evidence contradicts.
-It has **not** been fixed by editing the prompt, because four cases cannot
-justify that and a prompt fitted to the run that exposed it would mean nothing.
-`DOCUMENTATION-EVALS.md` §14 has the full analysis.
+`llama3.2` reports 0.80 confidence on all four answers, right and wrong alike —
+a number that never varies carries no information, and only the split scorecard
+makes that visible next to its respectable 2/2 attribution.
+
+The `latency-jump` miss is the more interesting half. It fails on **every** model
+tested, and they blame different commits — so it is not a model quirk. The
+packet carries no diff content, so an innocent commit that touches the affected
+path cannot be ruled out: the fix belongs in the evidence, not the prompt.
+`DOCUMENTATION-EVALS.md` §14 has the analysis.
 
 ---
 
