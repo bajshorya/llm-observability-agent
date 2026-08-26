@@ -1165,13 +1165,98 @@ would score better on that run and mean nothing. This is the same rule that kept
 the classifier prompt byte-for-byte unchanged through runs that scored badly.
 The finding is recorded; the fix waits for evidence.
 
+### Three models, and what that changed
+
+The single-model result left one question open: is `latency-jump` a failure of
+this model, or of the prompt? Running the same four cases against two more
+models answers it — and no new test data was needed, which is why this was done
+before adding cases.
+
+```
+                          gemini-3.5-flash  gemini-2.5-flash  llama3.2 (3B)  stub
+  named the right commit       2/2               2/2              2/2         0/2
+  declined when it should      1/2               1/2              0/2         0/2
+  right files within it        2/2               2/2              2/2         0/0
+  confidence when right       0.92              0.90             0.80         n/a
+             when wrong       0.60              0.70             0.80        0.25
+```
+
+**Every model fails `latency-jump`, and they blame different commits.**
+`gemini-3.5-flash` named the token-bucket commit; `gemini-2.5-flash` and
+`llama3.2` named the pricing commit. Different culprits, same failure — so this
+is not one model's quirk and not memorisation of a single answer. Something
+about the case itself invites an answer.
+
+**`error-spike` discriminates, so declining is not impossible.** Both Gemini
+models decline correctly there. Whatever is wrong is specific to
+`latency-jump`, not to the decline axis as a whole.
+
+**Confidence separates the models sharply.** Both Geminis report lower
+confidence when wrong — 0.60 and 0.70 against 0.90+ when right. `llama3.2`
+reports 0.80 on all four answers, correct and incorrect alike. That is the same
+pathology §7 found in classification, where it answered `critical` to
+everything: a number that never varies carries no information, and a blended
+scorecard would have hidden it behind a respectable 2/2 attribution.
+
+**`llama3.2` also fabricated evidence.** Its reasoning on `error-spike` says
+"the error text mentions an operation on the `discounted_total` field". It does
+not. That string appears in exactly one place in the packet — the body of a
+commit message — and the errors in that window are upstream payment timeouts.
+
+That is worse than a wrong answer, because it is an unverifiable claim stated as
+fact, and `grounding.ts` cannot catch it: the sha it named was real and the file
+it named was in that commit. Grounding checks that the answer refers to things
+the model was shown; it cannot check that the reasoning describes them
+correctly. Doing so would need a model grading a model, which §12 rules out.
+
+### Why `latency-jump` invites an answer, and where the fix belongs
+
+The obvious response is to tighten the prompt — raise the bar for naming a
+commit, or forbid the 0.5–0.8 band from being used to attribute. That would
+probably fix this case. It is also the move `CLAUDE.md` forbids, and the
+cross-model run shows why the instinct is wrong anyway: three models with very
+different capabilities all fail identically, which points at the evidence rather
+than the instructions.
+
+Look at what the packet actually offers about the pricing commit:
+
+```
+  src/lib/pricing.js    +7/-1
+  src/routes/orders.js  +2/-1
+```
+
+Two lines added to a route handler that serves the endpoints that got slow. The
+model cannot tell whether those two lines are a string format or a synchronous
+network round-trip, because **the packet carries no diff content** — a
+deliberate token trade, recorded in `DOCUMENTATION-PHASE-3.md` §14 as "a bug
+visible only in the diff is invisible to the agent".
+
+This is the same limitation biting from the other side. Without the diff, an
+innocent commit that touches the affected path cannot be *exonerated*. The
+models are not being careless; they are reasoning correctly from evidence that
+does not contain the fact that would settle it.
+
+So the justified next change is to the evidence, not the prompt — which is
+exactly what `CLAUDE.md` prescribes: *fix evidence and test data instead, and be
+able to justify each change without reference to the score it produced.* The
+justification here stands on its own: a correlator asked to rule commits out
+needs to see what they changed, not only how much.
+
+It remains a hypothesis until measured. Adding hunks roughly triples the packet,
+and a bigger packet can make things worse — §9 records an addition to the
+classifier packet that made one case worse before a second fixed it.
+
 ### What this does not establish
 
-Four cases, one application shape, one model, one run. Enough to show the tier
-beats its baseline on three axes and to expose one repeatable failure mode. Not
-enough to rank two competent models, and the decline half is **2 cases** — the
-thinnest part of the set and the half that matters most, exactly as the benign
-half does for Tier 2.
+Four cases and one application shape. Three models now, which is enough to say
+the `latency-jump` failure is not model-specific — but not enough to rank the
+two Gemini variants, which score identically on everything except the exact
+commit they wrongly name.
+
+The decline half is **2 cases**. It is the thinnest part of the set and the half
+that matters most, exactly as the benign half does for Tier 2, and one of those
+two cases fails on every model tested. Treat "declined when it should" as
+measured on a sample of two until that is widened.
 
 Reasoning quality is still not measured. `reasoning` is printed for wrong
 answers, because the answer is as often a bad label as a bad model — two of the

@@ -721,8 +721,9 @@ that produced it.
 
 The first stage that reads a second data source. Everything before it looks at
 what the service did; this puts that next to source history. Complete and
-measured as of Phase 3 — 2/2 attribution and 1/2 declining against a baseline
-that scores zero on both. See `DOCUMENTATION-PHASE-3.md` §11.
+measured as of Phase 3 — across three models, 2/2 attribution everywhere and
+1/2 declining on both Gemini variants, against a baseline that scores zero on
+both. See `DOCUMENTATION-PHASE-3.md` §11.
 
 **`commits.ts`** (214 lines) — the `git log` parser, **pure**. Exports
 `GIT_LOG_FORMAT`, `GIT_LOG_ARGS` and `parseGitLog`. Text in, commits out: no
@@ -1040,12 +1041,16 @@ why `pnpm classify` caps a run at 10 anomalies. Quota is bucketed per model, so
 provider in use is free and a cost column reading `0.00` would imply precision
 that isn't there.
 
-**Correlation declines on only half the cases it should.** Measured, four cases:
-attribution 2/2 across two different commits, declining 1/2, against a baseline
-of 0/2 and 0/2. The `latency-jump` miss is repeatable — the model invents an
-implementation detail the evidence contradicts and names a commit rather than
-declining. Written up rather than patched, because four cases cannot justify a
-prompt edit. `DOCUMENTATION-EVALS.md` §14.
+**Correlation declines on only half the cases it should**, and the same case
+fails on every model tested. Attribution is 2/2 across two different commits on
+all three; declining is 1/2 on both Gemini variants and 0/2 on `llama3.2`,
+against a baseline of 0/2 and 0/2.
+
+**The packet cannot exonerate an innocent commit.** This is the diagnosis behind
+that failure. With no diff content, `src/routes/orders.js +2/-1` could be a
+string format or a synchronous network call, and a model has no way to rule the
+commit out. The same no-hunks trade that makes a bug invisible when it is only
+in the diff also makes innocence invisible. `DOCUMENTATION-EVALS.md` §14.
 
 **Four correlation cases, and only two of them decline.** The decline half is
 the part that distinguishes the tier from its baseline, and it is the thinnest
@@ -1068,7 +1073,7 @@ and an add.
 
 | Phase | Scope | State |
 |---|---|---|
-| 3 | Commit correlation | ✅ **Done and measured** — 2/2 attribution, 1/2 declining, against a 0/2 and 0/2 baseline |
+| 3 | Commit correlation | ✅ **Done and measured** on three models — 2/2 attribution, 1/2 declining (0/2 on a 3B model), against a 0/2 and 0/2 baseline |
 | 4 | Root-cause + fix agent, human-gated | Schema and contract exist; no code |
 | 5 | Next.js dashboard with reasoning trace | Not started |
 
@@ -1080,8 +1085,10 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-Phase 3 is complete. What it needs is not more code but more cases: the decline
-half is two, which is the thinnest and most important part of the set.
+Phase 3 is complete. Two things would improve it, in order: **diff content in
+the packet**, which the cross-model run identified as the reason an innocent
+commit cannot be ruled out, and **more decline cases** — that half is two, the
+thinnest and most important part of the set.
 
 One decision precedes the golden cases — whether `deploy-restart`'s fabricated
 deploy sha becomes a real one. It would make the strongest `null` test in the

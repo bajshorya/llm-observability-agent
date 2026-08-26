@@ -720,28 +720,37 @@ The eval exists now: four cases, two attributable to **different** commits, two
 where the correct answer is `null` and six candidates are offered anyway.
 
 ```
-                            gemini-3.5-flash        stub (baseline)
-  named the right commit    2/2   100%              0/2     0%
-  declined when it should   1/2    50%              0/2     0%
-  right files within it     2/2   100%              0/0    n/a
-  confidence when right     0.92  when wrong 0.60   n/a    when wrong 0.25
+                          gemini-3.5-flash  gemini-2.5-flash  llama3.2 (3B)  stub
+  named the right commit       2/2               2/2              2/2         0/2
+  declined when it should      1/2               1/2              0/2         0/2
+  right files within it        2/2               2/2              2/2         0/0
+  confidence when right       0.92              0.90             0.80         n/a
+             when wrong       0.60              0.70             0.80        0.25
 ```
 
 The baseline scores zero on both accuracy axes — the fixture history is built so
 "blame the newest commit" is never right, and it names a commit on both decline
 cases too.
 
-**`latency-jump` is the failure, and it is stable.** The model attributed it to
-the token-bucket commit on a mechanism it invented — "*if* the middleware uses
-synchronous Redis calls or in-memory locks" — when the commit body in its own
-packet says rejection does no work. Its confidence was correctly lower (0.60 vs
-0.92), so calibration is working; it simply did not decline. Full analysis, and
-why the prompt was **not** changed in response, in `DOCUMENTATION-EVALS.md` §14.
+**`latency-jump` fails on every model tested**, and they blame different
+commits — `gemini-3.5-flash` the token bucket, `gemini-2.5-flash` and `llama3.2`
+the pricing change. Different culprits, same failure, so it is not one model's
+quirk.
 
-Four cases, one application shape, one model. Enough to show the tier beats its
-baseline on three axes and to expose one repeatable failure. Not enough to rank
-two competent models, and the decline half is two cases — the thinnest part of
-the set and the half that matters most.
+That cross-model run changed where the fix belongs. The instinct is to tighten
+the prompt; the evidence says otherwise. The packet offers `src/routes/orders.js
++2/-1` for the pricing commit and no diff content, so a model cannot tell
+whether those two lines are a string format or a synchronous network call. The
+deliberate no-hunks trade in §14 below was recorded as "a bug visible only in
+the diff is invisible to the agent" — this is the same limitation from the other
+side: an innocent commit touching the affected path cannot be **exonerated**.
+
+So the justified change is to the evidence, not the prompt, which is what
+`CLAUDE.md` prescribes. Full analysis in `DOCUMENTATION-EVALS.md` §14.
+
+Four cases, one application shape, three models. The decline half is two cases,
+and one of them fails everywhere — treat that axis as measured on a sample of
+two.
 
 ---
 

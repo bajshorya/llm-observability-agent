@@ -167,6 +167,7 @@ want the extended reasoning behind a particular decision.
 | Why would an anomaly be dismissed? | `PHASE-2` §9 and `EVALS` §3 |
 | Is the classifier any good? | `EVALS` §8–10 |
 | Is the correlator any good? | `EVALS` §14 |
+| Why does one case fail on every model? | `EVALS` §14, last two parts |
 | Which commit caused it? | `PHASE-3` §1, §5 |
 | Where do the fixture commits come from? | `PHASE-3` §3 |
 | What does the correlator actually see? | `PHASE-3` §7–8 |
@@ -299,14 +300,19 @@ Getting there took being wrong twice: two of the six labels were mine to fix, an
 one addition to the evidence packet made a case worse before a second one fixed
 it. That sequence is the more interesting half of the story.
 
-**Phase 3 now has its own number, and it is a more interesting one.** On four
-cases the model names the right commit 2/2 — across two *different* commits, so
-it is not pattern-matching — and declines 1/2. The "blame the newest commit"
+**Phase 3 has its own number, and a more interesting story.** On four cases,
+across three models, attribution is 2/2 everywhere — including two *different*
+guilty commits, so nothing is pattern-matching one answer. Declining is 1/2 on
+both Gemini variants and 0/2 on a 3B local model. The "blame the newest commit"
 baseline scores 0/2 and 0/2.
 
-The miss is the part worth reading. Given a latency incident no commit explains,
-the model invented an implementation detail its own evidence contradicts and
-named a commit rather than declining, repeatably. By idea 6 above that is the
-half that matters, and it has **not** been fixed by editing the prompt — four
-cases cannot justify that, and a prompt fitted to the run that exposed it would
-mean nothing. `EVALS` §14.
+The miss is the part worth reading, and it is the same case on every model. Two
+things came out of refusing to patch the prompt for it. Running the cases
+against more models showed all three fail identically — so it is not a model
+quirk. And looking at what the packet actually offers about the innocent commit
+(`src/routes/orders.js +2/-1`, no diff) showed why: without hunks, a commit that
+touches the affected path cannot be **exonerated**. The fix belongs in the
+evidence, which is what the project's own rule says. `EVALS` §14.
+
+By idea 6 above, declining is the half that matters — and it is measured on a
+sample of two.

@@ -37,12 +37,12 @@ Phases 0–2 are done: ingestion, storage, the three Tier 1 detectors, the LLM
 provider layer, the Tier 2 classifier, cost logging, and a golden-set eval
 harness.
 
-Phase 3 is **done and measured**: the target repository, the commit contract,
-the collector, the evidence packet, the prompt, the orchestration and a
-four-case eval. On `gemini-3.5-flash` it names the right commit 2/2 across two
-different commits and declines 1/2; the "blame the newest commit" baseline
-scores 0/2 and 0/2. The one failure is repeatable and is written up rather than
-patched — `DOCUMENTATION-EVALS.md` §14.
+Phase 3 is **done and measured across three models**: attribution 2/2
+everywhere, declining 1/2 on both Gemini variants and 0/2 on `llama3.2`, against
+a "blame the newest commit" baseline of 0/2 and 0/2. `latency-jump` fails on
+every model, and they blame different commits — so the fix belongs in the
+evidence (the packet carries no diff content, so an innocent commit cannot be
+exonerated), not in the prompt. `DOCUMENTATION-EVALS.md` §14.
 
 Phases 4 (root-cause agent) and 5 (dashboard) are not built.
 
@@ -63,6 +63,7 @@ pnpm correlate                     # Phase 3 — which commit, or none
 pnpm correlate --preview           # the exact prompt, calls nothing
 pnpm eval --provider gemini        # score the classifier golden set
 pnpm eval --correlation            # score the correlation set (4 cases)
+LLM_MODEL=llama3.2 pnpm eval --correlation --provider ollama   # free, local, no quota
 
 bash scripts/build-fixture-repo.sh # the repo Phase 3 correlates against
 ```
@@ -100,16 +101,24 @@ fixed string, so ANY change to the evidence packet invalidates all six. Rebuild
 with `bash scripts/capture-cases.sh`. It fails loudly if a scenario stops
 tripping Tier 1, which would otherwise make a case silently meaningless.
 
+**Ollama's configured default is `llama3.1:8b`, which may not be installed.**
+`ollama list` shows what is; override with `LLM_MODEL`. The eval counts a
+missing model as "no valid answer" rather than a wrong answer, which is correct
+but easy to misread as the model scoring zero.
+
 **Gemini free tier is 20 requests a day, bucketed PER MODEL.** A six-case eval
 plus any experimentation exhausts one model's budget. When you get a 429, point
 `LLM_MODEL` at a different model rather than waiting — the retry hint in the
 error is misleading.
 
-**Do not tune the prompt against the eval.** This has already been tested once:
-the correlation eval exposed a repeatable failure (`latency-jump`, see
-`DOCUMENTATION-EVALS.md` §14) that a prompt edit would plausibly fix. It was
-written up and left alone, because four cases cannot justify the edit and a
-prompt rewritten against the run that exposed it would mean nothing.
+**Do not tune the prompt against the eval.** This has already been tested once,
+and holding the line paid. The correlation eval exposed a repeatable failure
+(`latency-jump`) that a prompt edit would plausibly have fixed. Instead of
+editing, the same cases were run against two more models — all three failed
+identically, which located the problem in the EVIDENCE (no diff content, so an
+innocent commit cannot be exonerated) rather than the instructions. A prompt
+patch would have papered over that and scored better. `DOCUMENTATION-EVALS.md`
+§14.
 `correlation/prompt.test.ts` also enforces this mechanically for the correlator — it fails if a fixture identifier, a sha or a
 worked example appears in the prompt. The classifier prompt has no such guard
 and relies on this note.
