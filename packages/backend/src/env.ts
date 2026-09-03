@@ -15,6 +15,7 @@
  * WHAT IT CONFIGURES
  *   PORT, DATABASE_URL           the ingestion API and its store
  *   LLM_PROVIDER, LLM_MODEL      which model the agents call, and an override
+ *   LLM_TEMPERATURE              sampling override, for repeatability runs
  *   GEMINI/NVIDIA/OPENROUTER key credentials, all optional
  *   OLLAMA_BASE_URL              local provider, no key needed
  *   TARGET_REPO_PATH             the repository Phase 3 correlates against
@@ -84,6 +85,12 @@ const envSchema = z.object({
   LLM_PROVIDER: z.enum(llmProviderNames).default("stub"),
   /** Overrides the provider's default model. See src/llm/config.ts. */
   LLM_MODEL: optionalSecret,
+  /**
+   * Overrides `llmConfig.temperature`. Exists so the eval's own repeatability
+   * can be measured — running the same stored packets at 0 and at the default
+   * answers whether a score moves on its own, which nothing else can.
+   */
+  LLM_TEMPERATURE: z.coerce.number().min(0).max(2).optional(),
   GEMINI_API_KEY: optionalSecret,
   NVIDIA_API_KEY: optionalSecret,
   OPENROUTER_API_KEY: optionalSecret,
