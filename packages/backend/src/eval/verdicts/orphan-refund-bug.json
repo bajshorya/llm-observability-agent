@@ -1,0 +1,9 @@
+{
+  "scenario": "orphan-refund-bug",
+  "severity": "high",
+  "summary": "New errors indicate a missing refund policy for the 'marketplace' order channel, causing 140 failures on the /orders/:id/refund path.",
+  "affectedArea": "POST /orders/:id/refund",
+  "note": "A novel error confined to the refund path. High: sustained and user-visible, but contained to one endpoint while order reads and writes stay healthy. The correlation label is null because the change that caused it is nine days old and outside the lookback.",
+  "capturedFrom": "2026-09-03",
+  "model": "gemini-2.5-flash"
+}

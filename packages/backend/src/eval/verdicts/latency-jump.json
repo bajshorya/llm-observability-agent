@@ -4,5 +4,6 @@
   "summary": "The orders-api is experiencing a significant latency spike (p95 up to 1564ms) driven by upstream timeouts when contacting payments-service.",
   "affectedArea": "payments-service dependency",
   "note": "p95 degraded ~9x with no new error signature, driven by upstream timeouts. High, and the area names the dependency.",
-  "capturedFrom": "2026-09-03T07:33:25.369Z"
+  "capturedFrom": "2026-09-03T07:33:25.369Z",
+  "model": "gemini-3.5-flash"
 }
