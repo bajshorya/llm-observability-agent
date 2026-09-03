@@ -12,6 +12,8 @@
  *
  * THE VALUES, AND WHY
  *   temperature 0.1        Classification is a judgement, not a composition.
+ *                          Overridable via LLM_TEMPERATURE, for repeatability
+ *                          runs — see the field's own comment.
  *                          The same window must classify the same way twice, or
  *                          the eval harness measures noise instead of quality.
  *   maxOutputTokens 800    The answer is four short fields. This is a guard
@@ -34,14 +36,23 @@
  * 429, since quota is bucketed per model.
  */
 
-import type { LlmProviderName } from "../env";
+import { env, type LlmProviderName } from "../env";
 export const llmConfig = {
   /**
-   * Classification is a judgement, not a composition. Near-zero temperature
-   * keeps the same window classifying the same way across runs, which is what
-   * makes the eval harness meaningful and the demo repeatable.
+   * Classification is a judgement, not a composition, so this is near zero.
+   *
+   * It was long commented here that 0.1 "keeps the same window classifying the
+   * same way across runs". That was an assumption, not a measurement, and there
+   * is now evidence against it: two correlation decisions flipped between
+   * captures whose packets were byte-identical in the candidate half, pinned in
+   * the verdict, and within ~2% on the trigger magnitudes. Model sampling is
+   * the leading remaining explanation and has not been tested directly.
+   *
+   * `LLM_TEMPERATURE` overrides this so that test can be run — the same stored
+   * packets at 0 and at 0.1, several times each. Until it has been, treat a
+   * single eval run as a sample. `DOCUMENTATION-EVALS.md` §14.
    */
-  temperature: 0.1,
+  temperature: env.LLM_TEMPERATURE ?? 0.1,
 
   /**
    * The classifier's answer is four short fields. This is a guard against a
