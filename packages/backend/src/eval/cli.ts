@@ -77,6 +77,10 @@ Correlation mode (--correlation) takes the same --provider, --case, --list and
   pnpm eval --correlation --capture new-error --sha 0c701a0 \\
             --files src/lib/pricing.js --note "the null-price bug"
 
+  --diff on capture stores the experimental packet WITH hunks, from the same
+  incident, for an A/B that isolates them from everything else. Hunks are off
+  by default; see DOCUMENTATION-EVALS.md §14.
+
 
 Capturing a case:
   pnpm generate inject --scenario deploy-restart --minutes 5
@@ -173,7 +177,16 @@ async function captureCorrelation(
     throw new Error(`--sha is required: a full or abbreviated sha, or "none" for a decline case`);
   }
 
-  const rendered = await renderContextForIncident();
+  /**
+   * `--diff` captures the experimental packet, with hunks, from the SAME
+   * incident as the default one. That is what makes the A/B controlled:
+   * capturing the arms from separate runs would confound the hunks with
+   * whatever else differed — different traffic, different fixture shas, and
+   * (as it turned out to matter most) a different classifier summary.
+   */
+  const rendered = await renderContextForIncident(undefined, {}, {
+    diffs: values["diff"] === true,
+  });
   if (!rendered) {
     throw new Error(
       "No real incidents in the database. Inject a scenario, then run `pnpm detect` and `pnpm classify`.",
@@ -395,6 +408,7 @@ async function main(): Promise<void> {
       correlation: { type: "boolean" },
       sha: { type: "string" },
       files: { type: "string" },
+      diff: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
