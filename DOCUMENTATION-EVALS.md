@@ -1300,13 +1300,46 @@ it means inheriting its variance.
 
 Consequences, stated plainly:
 
-- **Scores are comparable within a capture generation, not across them.**
-  The 1/2 declining recorded earlier and the 2/2 here are not the same
-  measurement, and re-capturing can silently swap a hard case for an easy one.
-- Four cases makes this worse: one case changing difficulty moves the headline
-  by 25 points.
-- A fix would mean pinning the classifier verdict per case rather than
-  re-deriving it, or capturing several draws per scenario. Neither is done.
+- Scores were comparable within a capture generation, not across them. The 1/2
+  declining recorded earlier and the 2/2 after it were not the same
+  measurement, and re-capturing could silently swap a hard case for an easy one.
+- Four cases made this worse: one case changing difficulty moves the headline by
+  25 points.
+
+### The fix: pin the verdict
+
+An eval measures one stage with its input held fixed. The classifier set does
+this already — a case stores the rendered prompt, so the same evidence is scored
+every time. The correlation set was not doing it: **half its input was being
+re-derived by a model at capture time.**
+
+So the verdict is now a fixture. `src/eval/verdicts/<scenario>.json` holds a
+real Tier 2 output — severity, summary and affected area, recorded from a real
+run — and capture reads it instead of calling the classifier again.
+
+This is not a cheat, and the distinction matters. The stored verdict is as real
+as the stored context; what changes is that it stops being redrawn. A Tier 2
+eval holds the log evidence fixed and varies only the model under test; a Tier 3
+eval should hold Tier 2's conclusion fixed for the same reason.
+
+**Verified by capturing the set twice, from independent runs**, and comparing:
+the severity, affected area and summary are byte-identical across both. The
+traffic and the fixture shas still differ — those are inputs the correlator is
+supposed to handle — but the judgement it inherits no longer moves.
+
+Two side effects, both worth having:
+
+- **Capture now calls no model at all.** It used to cost one classification per
+  case on a free tier where quota is the binding constraint, and those calls
+  were the source of the variance they were paying for.
+- Capture no longer needs Tier 2 to have run, so a scenario Tier 2 would
+  dismiss can still be captured deliberately. The pipeline is unchanged: a real
+  correlation still reasons about what Tier 2 actually concluded, never about a
+  stored answer.
+
+**Re-pin deliberately**, when a scenario's evidence changes enough that its
+stored verdict is no longer what Tier 2 would say. Expect scores to move — that
+is a new capture generation, and numbers still do not cross between them.
 
 ### What was actually changed, and what was not
 
@@ -1330,12 +1363,17 @@ Four cases and one application shape. The decline half is **2 cases** — the
 thinnest part of the set and the half that matters most, exactly as the benign
 half does for Tier 2.
 
-And, as of the A/B above, the set is known to be **unstable across captures**.
-Any number in this section describes one capture generation. The honest summary
-of Phase 3 is: it clearly beats its baseline, which scores zero on both accuracy
-axes and has never scored anything else; beyond that, four inherited-variance
-cases cannot rank models or settle packet-design questions, and one attempt to
-settle such a question is written up above as having failed to settle it.
+The instability found by the A/B is fixed — the inherited verdict is pinned, and
+two independent captures now produce identical ones. That removes the largest
+source of drift, not all of it: the generated traffic and the fixture shas still
+vary per capture, so numbers across generations remain a comparison to make
+carefully rather than automatically.
+
+The honest summary of Phase 3: it clearly beats its baseline, which scores zero
+on both accuracy axes and has never scored anything else. Beyond that, four
+cases cannot rank models or settle packet-design questions — one attempt to
+settle such a question is written up above as having failed, and the failure was
+worth more than the answer would have been.
 
 Reasoning quality is still not measured. `reasoning` is printed for wrong
 answers, because the answer is as often a bad label as a bad model — two of the

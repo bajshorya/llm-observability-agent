@@ -108,7 +108,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 157 unit tests; 27 of them over the detectors and stats
+pnpm test                   # 162 unit tests; 27 of them over the detectors and stats
 ```
 
 A firing window looks like this:
@@ -274,11 +274,11 @@ both read as a respectable half.
 a number that never varies carries no information, and only the split scorecard
 makes that visible next to its respectable 2/2 attribution.
 
-The scores above describe **one capture generation**, and that qualifier is the
-main finding of the last round of work. A correlation case embeds the
-classifier's verdict, so re-capturing can silently change how hard the set is:
-one case failed on three models in August and passed on two in September with no
-change to the packet at all.
+A correlation case embeds the classifier's verdict, and re-capturing used to
+change how hard the set was: one case failed on three models in one generation
+and passed on two in the next with no change to the packet at all. The verdict
+is now pinned as a fixture and read at capture time, verified by capturing twice
+and comparing — which also means capture makes no model calls.
 
 An attempt to fix a specific failure by adding diff hunks to the packet was
 built, measured against the same anomalies with and without, and **not adopted**
@@ -458,7 +458,7 @@ pnpm eval --correlation --provider stub   # the blame-the-newest baseline
 
 bash scripts/build-fixture-repo.sh    # the repo correlation reads
 
-pnpm test                 # 157 unit tests, no network required
+pnpm test                 # 162 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
   WHERE error_signature IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;"

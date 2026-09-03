@@ -653,10 +653,10 @@ Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
 
 ## 11. Verified behaviour
 
-`pnpm typecheck` clean. **157 tests pass**, up from 81 — 19 for the parser and
+`pnpm typecheck` clean. **162 tests pass**, up from 81 — 19 for the parser and
 packet, 6 for prompt discipline, 11 for grounding, 4 for the stub's baseline, 21
-for the correlation scorer and 6 for diff rendering. None touch a filesystem or
-a database.
+for the correlation scorer, 6 for diff rendering and 5 for the pinned verdicts.
+Only the last reads the filesystem, and only to validate committed fixtures.
 
 The collector against the real fixture, for the golden window ending
 `2026-08-16T19:02Z`:
@@ -750,14 +750,21 @@ motivated it did not reproduce. **Hunks are off by default**, the capability is
 kept, and the reasoning is in `DOCUMENTATION-EVALS.md` §14.
 
 The more consequential finding came out of the same exercise: **correlation
-cases are not stable across captures.** A case embeds the classifier's verdict,
+cases were not stable across captures.** A case embeds the classifier's verdict,
 and when Tier 2 happens to name an external cause the correlator's job becomes
-much easier. Same scenario, same label, materially different difficulty — so
-scores are comparable within a capture generation, not across them.
+much easier. Same scenario, same label, materially different difficulty.
 
-Four cases, one application shape. The decline half is two cases, and the set
-inherits the classifier's variance — treat every number here as describing one
-capture generation.
+That is fixed. The verdict is now a pinned fixture in
+`src/eval/verdicts/<scenario>.json` — real Tier 2 output, recorded rather than
+redrawn — and capture reads it instead of calling the classifier. Verified by
+capturing the set twice from independent runs: severity, affected area and
+summary are byte-identical across both. Capture also stopped making model calls
+entirely, since those calls *were* the variance.
+
+Four cases, one application shape. The decline half is two cases. The inherited
+verdict is pinned now, so the largest source of drift is gone; the generated
+traffic and fixture shas still vary per capture, so numbers across generations
+stay a careful comparison rather than an automatic one.
 
 ---
 
@@ -776,11 +783,10 @@ capture generation.
 | Correlation eval and scorecard | ✅ Built — `pnpm eval --correlation` |
 | `correlations` table | ✅ Written by `correlate.ts` |
 
-Nothing remains in Phase 3 as code. What it needs is a better golden set: the
-decline half is two cases, and the set inherits the classifier's variance so a
-re-capture can silently change its difficulty. Pinning the classifier verdict
-per case, or capturing several draws per scenario, would fix that — and both the
-hunks question and the decline axis are waiting on it.
+Nothing remains in Phase 3 as code, and the set is now stable. What it needs is
+**more decline cases** — that half is two, the thinnest and most important part
+of it, and the hunks question in §14 is waiting on a set large enough to settle
+it.
 
 ---
 

@@ -50,7 +50,7 @@ on the benign half. See `DOCUMENTATION-EVALS.md` §10.
 ## Commands
 
 ```bash
-pnpm typecheck && pnpm test        # 157 tests, ~300ms, no network
+pnpm typecheck && pnpm test        # 162 tests, ~300ms, no network
 pnpm backend                       # ingestion API on :4000
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -93,11 +93,13 @@ column, and limitations are listed rather than omitted.
 
 ## Gotchas that will cost you time
 
-**Correlation cases inherit the classifier's variance, so re-capturing can
-silently change how hard the set is.** A case embeds Tier 2's summary; when it
-names an external cause, declining becomes nearly free. `latency-jump` failed on
-three models in one capture and passed on two in the next with no packet change.
-Correlation scores are comparable within a capture generation, not across them.
+**Correlation cases pin Tier 2's verdict — do not make capture call the
+classifier again.** A packet embeds the verdict, and re-deriving it from a model
+per capture made the set's difficulty drift: `latency-jump` failed on three
+models in one capture and passed on two in the next with no packet change. The
+verdict now lives in `src/eval/verdicts/<scenario>.json` and capture reads it,
+which is also why capture makes no model calls. Re-pin deliberately, from a real
+run, and expect scores to move when you do.
 
 **Hunks in the correlation packet are built but OFF.** `{ diffs: true }`, or
 `--diff` on capture. A controlled A/B did not support turning them on: one

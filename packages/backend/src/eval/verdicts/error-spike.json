@@ -1,0 +1,8 @@
+{
+  "scenario": "error-spike",
+  "severity": "high",
+  "summary": "The orders-api is experiencing 504 Gateway Timeouts due to upstream timeouts when contacting payments-service, affecting order creation, retrieval, and refunds.",
+  "affectedArea": "payments-service dependency",
+  "note": "A 40x spike of failures already present in the baseline, all upstream payment timeouts. High, and the area names the dependency rather than a path in this service.",
+  "capturedFrom": "2026-09-03T07:33:16.390Z"
+}

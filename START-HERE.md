@@ -66,7 +66,7 @@ why the default provider is an offline stub.
 In every module, the logic that decides things has no database, clock, or I/O —
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `grounding.ts`. The
 code that touches the database is separate — `engine.ts`, `rollup.ts`,
-`classify.ts`, `calls.ts`. That split is why 157 tests run in 300ms with no
+`classify.ts`, `calls.ts`. That split is why 162 tests run in 300ms with no
 fixtures — including a `git log` parser tested entirely on strings, with no
 repository anywhere near it. **When you are hunting for logic, it is in a pure file.**
 
@@ -167,7 +167,8 @@ want the extended reasoning behind a particular decision.
 | Why would an anomaly be dismissed? | `PHASE-2` §9 and `EVALS` §3 |
 | Is the classifier any good? | `EVALS` §8–10 |
 | Is the correlator any good? | `EVALS` §14 |
-| Why does one case fail on every model? | `EVALS` §14, last two parts |
+| Why does one case fail on every model? | `EVALS` §14 |
+| Why are eval scores not comparable across captures? | `EVALS` §14 |
 | Which commit caused it? | `PHASE-3` §1, §5 |
 | Where do the fixture commits come from? | `PHASE-3` §3 |
 | What does the correlator actually see? | `PHASE-3` §7–8 |
@@ -306,12 +307,16 @@ guilty commits, so nothing is pattern-matching one answer. Declining is 1/2 on
 both Gemini variants and 0/2 on a 3B local model. The "blame the newest commit"
 baseline scores 0/2 and 0/2.
 
-Those numbers describe **one capture generation**, and that caveat is the most
-useful thing Phase 3 produced. A correlation case embeds the classifier's
-verdict, so re-capturing can silently change how hard the set is: one case
-failed on three models in August and passed on two in September with no change
-to the packet. Correlation is the first stage whose golden cases inherit another
-model's judgement, and inheriting it means inheriting its variance.
+The most useful thing Phase 3 produced was a defect in its own harness.
+Correlation is the first stage whose golden cases inherit another model's
+*judgement* rather than its inputs — a packet embeds Tier 2's verdict — and
+inheriting judgement means inheriting variance. One case failed on three models
+in one capture and passed on two in the next with no change to the packet.
+
+An eval measures one stage with its input held fixed, and half this one's input
+was being redrawn by a model every capture. The verdict is now pinned as a
+fixture; capturing twice produces identical ones, and capture makes no model
+calls at all.
 
 The attempt to fix that case — adding diff hunks so an innocent commit can be
 ruled out — was built, measured with and without on identical anomalies, and

@@ -166,7 +166,7 @@ checkable, not just claimed.
 In every module, the code that *decides* has no database, clock, or network:
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `json.ts`,
 `grounding.ts`, `score.ts`. The code that *persists* is separate: `engine.ts`,
-`rollup.ts`, `classify.ts`, `calls.ts`. This is why 157 tests run in ~300 ms with
+`rollup.ts`, `classify.ts`, `calls.ts`. This is why 162 tests run in ~300 ms with
 no fixtures. **When hunting for logic, it is in a pure file.**
 
 **3 · Everything crossing a boundary is validated with Zod.**
@@ -679,6 +679,17 @@ a blended number hides that completely.
 **`cli.ts`** (219 lines) — `pnpm eval`, with `--provider`, `--case`, `--list`,
 `--show`, and `--capture`. Exits non-zero when any verdict is wrong.
 
+**`verdicts.ts`** (109 lines) — pinned Tier 2 verdicts, one JSON fixture per
+scenario. A correlation packet embeds the classifier's judgement, and
+re-deriving it from a model at capture time made the set's difficulty drift
+between generations. An eval measures one stage with its input held fixed; this
+restores that property for Tier 3, the way a stored context already does for
+Tier 2. Loading throws rather than falling back to a live classification, since
+a silent fallback would reintroduce the variance invisibly.
+
+Side effect worth having: capture now makes **no model calls at all**, and no
+longer requires Tier 2 to have run first.
+
 **`correlation-cases.ts`** (123 lines) — the Phase 3 case schema. Same
 stored-string design as `cases.ts`, with one property the classifier set lacks:
 a correlation case is **self-contained**. Its prompt names its candidates and
@@ -936,7 +947,7 @@ Code-level tunables live in `detection/config.ts` (thresholds),
 pnpm install && pnpm db:push        # setup
 pnpm backend                        # ingestion API on :4000
 pnpm typecheck                      # strict TS, all packages
-pnpm test                           # 157 unit tests, ~300ms, no network
+pnpm test                           # 162 unit tests, ~300ms, no network
 
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -968,7 +979,7 @@ bash scripts/build-fixture-repo.sh --anchor now   # for a live demo; different s
 
 ## 18. Testing strategy
 
-Ten test files, 157 tests, ~300 ms, no network or database.
+Eleven test files, 162 tests, ~300 ms, no network or database.
 
 | File | Covers |
 |---|---|
@@ -982,6 +993,7 @@ Ten test files, 157 tests, ~300 ms, no network or database.
 | `correlation/prompt.test.ts` | Prompt discipline: no fixture identifiers, no shas, no worked examples |
 | `correlation/grounding.test.ts` | Sha resolution, invented shas rejected, invented files dropped |
 | `eval/score-correlation.test.ts` | The four axes: attribution and declining never averaged, files scored only where applicable |
+| `eval/verdicts.test.ts` | Pinned verdicts parse, cover every case's scenario, and match what the stored packets contain |
 
 Two conventions worth knowing. Tests run against the **real config objects**, not
 fixtures, so changing a threshold fails a test rather than silently altering
@@ -1054,12 +1066,12 @@ against a baseline of 0/2 and 0/2.
 call. Hunks were built to fix this and measured; the A/B did not support
 adopting them, so they are off by default. `DOCUMENTATION-EVALS.md` §14.
 
-**Correlation cases inherit the classifier's variance.** A case embeds Tier 2's
-summary, so a re-capture can silently swap a hard case for an easy one — one
-case failed on three models in one generation and passed on two in the next with
-no packet change. Correlation scores are comparable within a capture generation,
-not across them. The classifier set does not have this problem: its cases embed
-detector output and log text, which are generated but not reasoned.
+**Correlation cases used to inherit the classifier's variance**, so a re-capture
+could silently swap a hard case for an easy one — one failed on three models in
+one generation and passed on two in the next with no packet change. Fixed by
+pinning Tier 2's verdict as a fixture (§14a). What still varies per capture is
+the generated traffic and the fixture shas, so cross-generation comparisons
+remain a judgement rather than an automatic one.
 
 **Four correlation cases, and only two of them decline.** The decline half is
 the part that distinguishes the tier from its baseline, and it is the thinnest
@@ -1094,11 +1106,10 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-Phase 3 is complete as code. What it needs is a better golden set, and in this
-order: **stability** (pin the classifier verdict per case, or capture several
-draws per scenario, so difficulty stops drifting between captures) and then
-**more decline cases** — that half is two. Both the hunks question and the
-decline axis are blocked on the first.
+Phase 3 is complete as code, and its golden set is now stable — Tier 2's verdict
+is pinned, verified by capturing twice and comparing. What it needs next is
+**more decline cases**: that half is two, the thinnest and most important part
+of the set, and the hunks question in §14 is waiting on it.
 
 One decision precedes the golden cases — whether `deploy-restart`'s fabricated
 deploy sha becomes a real one. It would make the strongest `null` test in the

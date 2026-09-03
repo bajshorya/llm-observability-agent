@@ -94,6 +94,22 @@ export interface CorrelationRunResult {
   outcomes: CorrelationOutcome[];
 }
 
+/**
+ * A Tier 2 verdict supplied from outside instead of read from the row.
+ *
+ * Used only by golden-case capture, so the packet holds the classifier's
+ * judgement FIXED rather than redrawing it from a model on every capture. See
+ * `eval/verdicts.ts` for why that variance was a defect worth removing.
+ *
+ * The pipeline never passes this: a real correlation must reason about what
+ * Tier 2 actually concluded on that anomaly, not about a stored answer.
+ */
+export interface VerdictOverride {
+  severity: Severity;
+  summary: string;
+  affectedArea: string;
+}
+
 export interface CorrelateOptions {
   provider?: LlmProvider | undefined;
   /** Cap per run, so a backlog cannot empty a free-tier quota in one go. */
@@ -103,6 +119,8 @@ export interface CorrelateOptions {
   lookbackHours?: number | undefined;
   maxCommits?: number | undefined;
   repoPath?: string | undefined;
+  /** Capture only — see `VerdictOverride`. */
+  verdict?: VerdictOverride | undefined;
 }
 
 interface PendingIncident {
@@ -165,7 +183,9 @@ export async function buildCorrelationInput(
   incident: PendingIncident,
   options: CorrelateOptions = {},
 ): Promise<CorrelationInput> {
-  if (incident.severity === null || incident.summary === null) {
+  const verdict = options.verdict;
+
+  if (!verdict && (incident.severity === null || incident.summary === null)) {
     throw new Error(
       `anomaly ${incident.id} has not been classified — run \`pnpm classify\` first`,
     );
@@ -183,11 +203,14 @@ export async function buildCorrelationInput(
     windowStart: incident.windowStart,
     windowEnd: incident.windowEnd,
     triggers: incident.triggers,
-    severity: incident.severity,
-    summary: incident.summary,
+    // The override wins where present, which is capture only. The non-null
+    // assertions are safe: the guard above rejects a missing verdict when no
+    // override was supplied.
+    severity: verdict?.severity ?? incident.severity!,
+    summary: verdict?.summary ?? incident.summary!,
     // Tier 2 offers "unknown" as an explicit escape hatch; a null column here
     // means an older row written before that field existed.
-    affectedArea: incident.affectedArea ?? "unknown",
+    affectedArea: verdict?.affectedArea ?? incident.affectedArea ?? "unknown",
     commits,
   };
 }
@@ -349,12 +372,18 @@ export async function renderContextForIncident(
   options: CorrelateOptions = {},
   render: RenderCorrelationOptions = {},
 ): Promise<RenderedCorrelationContext | null> {
+  /**
+   * With a pinned verdict the classification is being SUPPLIED, so requiring
+   * Tier 2 to have run first would be requiring the very model call the pin
+   * exists to remove. Without one, only confirmed incidents are eligible —
+   * which is what the pipeline does.
+   */
   const [incident] = anomalyId
     ? await db.select(INCIDENT_COLUMNS).from(anomalies).where(eq(anomalies.id, anomalyId))
     : await db
         .select(INCIDENT_COLUMNS)
         .from(anomalies)
-        .where(eq(anomalies.isRealIncident, true))
+        .where(options.verdict ? undefined : eq(anomalies.isRealIncident, true))
         .orderBy(desc(anomalies.detectedAt))
         .limit(1);
 
