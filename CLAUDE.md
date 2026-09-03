@@ -37,9 +37,12 @@ Phases 0–2 are done: ingestion, storage, the three Tier 1 detectors, the LLM
 provider layer, the Tier 2 classifier, cost logging, and a golden-set eval
 harness.
 
-Phase 3 is **done and measured across three models**: attribution 2/2
-everywhere, declining 1/2 on both Gemini variants and 0/2 on `llama3.2`, against
-a "blame the newest commit" baseline of 0/2 and 0/2. `DOCUMENTATION-EVALS.md` §14.
+Phase 3 is **done and measured** on a six-case set (two attributable, four
+declines for four different reasons). `gemini-2.5-flash` scores 2/2 and 4/4;
+`llama3.2` names the same commit to every case and scores 0/4 on declining; the
+"blame the newest commit" baseline scores 0/2 and 0/4. **A single run is a
+sample** — the same model scored 1/4 declining on the previous capture, and
+repeatability is untested. `DOCUMENTATION-EVALS.md` §14.
 
 Phases 4 (root-cause agent) and 5 (dashboard) are not built.
 
@@ -105,6 +108,13 @@ run, and expect scores to move when you do.
 `--diff` on capture. A controlled A/B did not support turning them on: one
 regression, no reproducible benefit, 3.7× packet growth. Do not switch the
 default without a bigger and more stable golden set. `DOCUMENTATION-EVALS.md` §14.
+
+**A decline case is only as good as the absence of a plausible culprit, and
+"plausible" is judged from the packet, not the source tree.** `orphan-refund-bug`
+originally named `created_at` in its error, and a model correctly reasoned that
+the commit changing `created_at` formatting could cause it. The scenario was
+changed, not the label. Check a new decline case's error text against every
+commit in the window before pinning it.
 
 **Golden cases are captured artefacts.** They store the rendered prompt as a
 fixed string, so ANY change to the evidence packet invalidates all six. Rebuild

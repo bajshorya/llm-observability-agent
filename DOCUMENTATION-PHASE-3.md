@@ -267,8 +267,8 @@ that answer would look exactly as confident as a correct one. Loud is better.
 enough to cover a bug that shipped Friday and surfaced under Monday load; narrow
 enough that a typical result is a page of text.
 
-**Both numbers are arguments, not measurements.** The correlation set is four
-cases; tuning a bound against four cases would mean nothing — the same reasoning
+**Both numbers are arguments, not measurements.** The correlation set is six
+cases; tuning a bound against six cases would mean nothing — the same reasoning
 that keeps both prompts unchanged, and that left the `latency-jump` failure
 written up rather than patched. They are stated in the file header
 so the next person can disagree with a number rather than discover one.
@@ -717,26 +717,36 @@ was attributed per agent in `llm_calls`.
 
 ### And the measured result
 
-The eval exists now: four cases, two attributable to **different** commits, two
+The eval exists now: six cases, two attributable to **different** commits, four
 where the correct answer is `null` and six candidates are offered anyway.
 
+The set is six cases: two attributable to different commits, and **four
+declines that are four different reasons to answer null** — an upstream
+dependency, that dependency degrading, a load change, and a real code bug whose
+cause is older than the lookback.
+
 ```
-                          gemini-3.5-flash  gemini-2.5-flash  llama3.2 (3B)  stub
-  named the right commit       2/2               2/2              2/2         0/2
-  declined when it should      1/2               1/2              0/2         0/2
-  right files within it        2/2               2/2              2/2         0/0
-  confidence when right       0.92              0.90             0.80         n/a
-             when wrong       0.60              0.70             0.80        0.25
+                          gemini-2.5-flash   llama3.2 (3B)   stub
+  named the right commit       2/2               1/2 *        0/2
+  declined when it should      4/4               0/4          0/4
+  right files within it        2/2               1/1          0/0
+  confidence                  0.90            0.80 on all six  0.25
 ```
+\* correct by accident — it names the same commit on every case.
 
 The baseline scores zero on both accuracy axes — the fixture history is built so
 "blame the newest commit" is never right, and it names a commit on both decline
 cases too.
 
-**`latency-jump` fails on every model tested**, and they blame different
-commits — `gemini-3.5-flash` the token bucket, `gemini-2.5-flash` and `llama3.2`
-the pricing change. Different culprits, same failure, so it is not one model's
-quirk.
+**A single run is a sample, not a measurement.** The same model scored 1/4 on
+declining against the previous capture and 4/4 against this one. One of those
+failures was a case mislabelled by its author, now fixed; the other two flipped
+for reasons not yet established. Repeatability on identical packets is untested
+and quota-blocked. `DOCUMENTATION-EVALS.md` §14.
+
+**The widening did its job immediately.** `llama3.2` answers the same commit to
+all six cases; on the old two-case decline half that read as 2/2 attribution and
+looked like competence.
 
 That pointed at the evidence rather than the prompt: the packet offers
 `src/routes/orders.js +2/-1` and no hunks, so a model cannot tell whether two
@@ -761,10 +771,10 @@ capturing the set twice from independent runs: severity, affected area and
 summary are byte-identical across both. Capture also stopped making model calls
 entirely, since those calls *were* the variance.
 
-Four cases, one application shape. The decline half is two cases. The inherited
-verdict is pinned now, so the largest source of drift is gone; the generated
-traffic and fixture shas still vary per capture, so numbers across generations
-stay a careful comparison rather than an automatic one.
+Six cases, one application shape, four of them declines. The inherited verdict
+is pinned, which removed the largest source of drift but not all of it — see the
+1/4-to-4/4 swing above. The claim that survives every capture is the one the
+baseline supports.
 
 ---
 
@@ -783,10 +793,11 @@ stay a careful comparison rather than an automatic one.
 | Correlation eval and scorecard | ✅ Built — `pnpm eval --correlation` |
 | `correlations` table | ✅ Written by `correlate.ts` |
 
-Nothing remains in Phase 3 as code, and the set is now stable. What it needs is
-**more decline cases** — that half is two, the thinnest and most important part
-of it, and the hunks question in §14 is waiting on a set large enough to settle
-it.
+Nothing remains in Phase 3 as code. The decline half is four now, and the next
+thing to measure is **repeatability**: re-run identical stored packets several
+times and see how much a score moves on its own. Until that is known, the hunks
+question in §14 cannot be settled either — an A/B cannot resolve a difference
+smaller than the noise, and the noise is unmeasured.
 
 ---
 

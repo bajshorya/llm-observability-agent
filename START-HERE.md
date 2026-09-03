@@ -41,7 +41,7 @@ propose a fix.
                                             ▼
         TIER 3  commit correlation                 in progress
         which commit did this, or none?
-        2/2 attribution · 1/2 declining · baseline 0/2 and 0/2
+        2/2 attribution · 4/4 declining · baseline 0/2 and 0/4
 ```
 
 The funnel is the whole point. Tier 1 is free and can run every 30 seconds.
@@ -114,8 +114,8 @@ Faster than the docs for most questions. The whole system is ~8,100 lines.
 packages/shared/        The contract. Zod schemas + signature normalisation.
                         Read schemas/ first — it defines every shape in the system.
 
-packages/generator/     Synthetic traffic. scenarios.ts holds all seven scenarios;
-                        four are real incidents, three should be dismissed.
+packages/generator/     Synthetic traffic. scenarios.ts holds all nine scenarios;
+                        six are real incidents, three should be dismissed.
 
 packages/backend/src/
   routes/ingest.ts      Validate and persist. Deliberately dumb.
@@ -301,11 +301,11 @@ Getting there took being wrong twice: two of the six labels were mine to fix, an
 one addition to the evidence packet made a case worse before a second one fixed
 it. That sequence is the more interesting half of the story.
 
-**Phase 3 has its own number, and a more interesting story.** On four cases,
-across three models, attribution is 2/2 everywhere — including two *different*
-guilty commits, so nothing is pattern-matching one answer. Declining is 1/2 on
-both Gemini variants and 0/2 on a 3B local model. The "blame the newest commit"
-baseline scores 0/2 and 0/2.
+**Phase 3 has its own number, and a more interesting story.** On six cases —
+two attributable to *different* commits, four declines for four different
+reasons — `gemini-2.5-flash` scores 2/2 and 4/4. A 3B local model scores 0/4 on
+declining because it names the same commit to every case. The "blame the newest
+commit" baseline scores 0/2 and 0/4.
 
 The most useful thing Phase 3 produced was a defect in its own harness.
 Correlation is the first stage whose golden cases inherit another model's
@@ -317,6 +317,11 @@ An eval measures one stage with its input held fixed, and half this one's input
 was being redrawn by a model every capture. The verdict is now pinned as a
 fixture; capturing twice produces identical ones, and capture makes no model
 calls at all.
+
+That fixed the largest source of drift, not all of it — the same model still
+scored 1/4 on declining against one capture and 4/4 against the next. **Treat a
+single correlation run as a sample.** Measuring how far a score moves on its own
+is the next open question, and every other one is downstream of it.
 
 The attempt to fix that case — adding diff hunks so an innocent commit can be
 ruled out — was built, measured with and without on identical anomalies, and

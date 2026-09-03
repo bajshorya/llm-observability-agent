@@ -144,7 +144,7 @@ where semantic understanding earns its price.
 ```
 
 Two things flow alongside: the **generator** produces synthetic traffic (healthy
-baselines and seven injectable scenarios), and the **eval harness** scores the
+baselines and nine injectable scenarios), and the **eval harness** scores the
 classifier against captured golden cases. There is no correlation eval yet.
 
 The funnel narrows twice. Tier 2 only sees what Tier 1 raised; correlation only
@@ -442,7 +442,7 @@ uses Box–Muller to draw a normal sample and exponentiates it into a log-normal
 the shape real latency actually has. Seeding matters: a failing detector test
 reproduces exactly, and the demo tells the same story every run.
 
-**`src/scenarios.ts`** (586 lines) — traffic profiles and all seven scenarios.
+**`src/scenarios.ts`** (764 lines) — traffic profiles and all nine scenarios.
 `BASELINE` is 240 rpm, 0.8% error rate, 45 ms median, tail factor 3. Four weighted
 endpoints with their own latency multipliers. A gentle diurnal curve keeps the
 baseline from being trivially predictable — which is what makes a mean+stddev
@@ -679,7 +679,7 @@ a blended number hides that completely.
 **`cli.ts`** (219 lines) — `pnpm eval`, with `--provider`, `--case`, `--list`,
 `--show`, and `--capture`. Exits non-zero when any verdict is wrong.
 
-**`verdicts.ts`** (109 lines) — pinned Tier 2 verdicts, one JSON fixture per
+**`verdicts.ts`** (116 lines) — pinned Tier 2 verdicts, one JSON fixture per
 scenario. A correlation packet embeds the classifier's judgement, and
 re-deriving it from a model at capture time made the set's difficulty drift
 between generations. An eval measures one stage with its input held fixed; this
@@ -710,10 +710,13 @@ would score a hallucination as "the provider errored".
 
 **`cases/*.json`** — six captured cases, three incidents and three benign.
 
-**`correlation-cases/*.json`** — four captured cases: two attributable to
-*different* commits, two where the answer is `null` and six candidates are
+**`correlation-cases/*.json`** — six captured cases: two attributable to
+*different* commits, four where the answer is `null` and six candidates are
 offered anyway. Two different commits is load-bearing — with one, "finds the
-guilty commit" and "has learned the answer" score identically.
+guilty commit" and "has learned the answer" score identically. So is four
+declines for four different reasons: `llama3.2` names one commit to every case,
+which read as 2/2 attribution on a two-decline set and reads as 0/4 declining
+here.
 
 **`scripts/capture-correlation-cases.sh`** (repo root, 146 lines) — rebuilds the
 correlation set. Differs from the classifier capture in three ways: it runs Tier
@@ -952,7 +955,7 @@ pnpm test                           # 162 unit tests, ~300ms, no network
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
 pnpm generate live
-pnpm generate --help                # lists all seven scenarios
+pnpm generate --help                # lists all nine scenarios
 
 pnpm detect                         # rollup + detect once
 pnpm detect --watch 30              # every 30s
@@ -1056,10 +1059,12 @@ why `pnpm classify` caps a run at 10 anomalies. Quota is bucketed per model, so
 provider in use is free and a cost column reading `0.00` would imply precision
 that isn't there.
 
-**Correlation declines on only half the cases it should**, and the same case
-fails on every model tested. Attribution is 2/2 across two different commits on
-all three; declining is 1/2 on both Gemini variants and 0/2 on `llama3.2`,
-against a baseline of 0/2 and 0/2.
+**A single correlation run is a sample, not a measurement.** `gemini-2.5-flash`
+scored 1/4 declining on one capture and 4/4 on the next. One of those failures
+was a mislabelled case, now fixed; the other two flipped for reasons not
+established. Repeatability on identical stored packets is untested and
+quota-blocked, so this harness's noise floor is unknown — which also means the
+hunks A/B could not have resolved anything smaller than it.
 
 **The packet cannot exonerate an innocent commit.** With no diff content,
 `src/routes/orders.js +2/-1` could be a string format or a synchronous network
@@ -1094,7 +1099,7 @@ and an add.
 
 | Phase | Scope | State |
 |---|---|---|
-| 3 | Commit correlation | ✅ **Done and measured** on three models — 2/2 attribution, 1/2 declining (0/2 on a 3B model), against a 0/2 and 0/2 baseline |
+| 3 | Commit correlation | ✅ **Done and measured** on a six-case set — 2/2 attribution and 4/4 declining on `gemini-2.5-flash`, against a 0/2 and 0/4 baseline. Single runs are samples; see §19 |
 | 4 | Root-cause + fix agent, human-gated | Schema and contract exist; no code |
 | 5 | Next.js dashboard with reasoning trace | Not started |
 
@@ -1106,10 +1111,10 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-Phase 3 is complete as code, and its golden set is now stable — Tier 2's verdict
-is pinned, verified by capturing twice and comparing. What it needs next is
-**more decline cases**: that half is two, the thinnest and most important part
-of the set, and the hunks question in §14 is waiting on it.
+Phase 3 is complete as code. Tier 2's verdict is pinned and the decline half is
+four. What it needs next is a **repeatability measurement** — re-run identical
+stored packets several times and see how far a score moves on its own. Every
+other open question here, the hunks A/B included, is downstream of that number.
 
 One decision precedes the golden cases — whether `deploy-restart`'s fabricated
 deploy sha becomes a real one. It would make the strongest `null` test in the

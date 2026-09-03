@@ -1064,7 +1064,7 @@ produced.
 
 Sections 1–13 measure **Tier 2 only**. This one measures Phase 3.
 
-### The set is four cases, and why it is shaped that way
+### The set is six cases, and why it is shaped that way
 
 Only incidents reach correlation — Tier 2 dismisses benign windows and
 `loadPending` filters on `is_real_incident = 1` — so the correlation set cannot
@@ -1075,8 +1075,20 @@ the right answer differs:
 |---|---|---|
 | `new-error` | the pricing commit | A novel `TypeError` on `toFixed`; that commit added the call, on a field that is null whenever no promotion applies |
 | `limiter-misconfig` | the token-bucket commit | Legitimate writes rejected at quota across hundreds of clients; that commit introduced the limiter running the burst and refill the warning reports |
-| `error-spike` | **null** | 40× volume of failures already in the baseline — upstream or load, and no candidate touches the payments path |
-| `latency-jump` | **null** | p95 ×8 with no new signature and no commit touching a latency-sensitive path |
+| `error-spike` | **null** | 40× volume of failures already in the baseline — an upstream dependency |
+| `latency-jump` | **null** | p95 ×8 with no new signature — the same dependency, degrading |
+| `traffic-surge` | **null** | volume ×5 saturating a pool sized in the initial scaffold; the load changed and the code did not |
+| `orphan-refund-bug` | **null** | a novel error whose cause is nine days old and outside the lookback, so no candidate explains it |
+
+**The four decline cases are four different reasons to answer null**, and that
+is the point of the last two. `error-spike` and `latency-jump` both bottom out
+at "an upstream dependency is failing" — a decline half where every case means
+the same thing measures one thing twice.
+
+`orphan-refund-bug` is the hardest of them. A novel error signature is the
+strongest single signal that *code changed*, and the prompt says so. Here that
+signal is true and the responsible change is simply not on offer, so the model
+has to resist "a novel error appeared, therefore one of these commits did it".
 
 **Two attributable cases pointing at DIFFERENT commits is the load-bearing
 detail.** With one, "finds the guilty commit" and "has learned the answer is the
@@ -1084,7 +1096,7 @@ pricing one" produce identical scores. `limiter-misconfig` was added to the
 generator for this reason, and it is the only scenario whose primary job is
 correlation rather than classification.
 
-**Both decline cases are offered six candidates.** A decline scored against an
+**Every decline case is offered six candidates.** A decline scored against an
 empty candidate list would measure nothing.
 
 ### The scorecard splits four ways
@@ -1357,23 +1369,107 @@ The a priori argument for hunks is unchanged and still good. It is waiting on a
 golden set large and stable enough to answer the question, which is the same
 thing the decline axis is waiting on.
 
+### Widening the decline half, and what it immediately exposed
+
+Two cases was the thinnest and most important part of the set, so two more were
+added — `traffic-surge` and `orphan-refund-bug`, chosen to be different reasons
+to decline rather than more of the same. Doubling that half changed what the
+scorecard could see, in three ways.
+
+**`llama3.2` answered the same commit to all six cases.**
+
+```
+  named the right commit    1/2    50%
+  declined when it should   0/4     0%
+  confidence               0.80 on every answer, right and wrong
+```
+
+Its one correct attribution is correct *by accident* — it names the pricing
+commit unconditionally. On the four-case set the same behaviour read as 2/2
+attribution, which looks like competence. Four decline cases and a constant
+0.80 confidence make the degenerate strategy unmissable.
+
+**`gemini-2.5-flash` failed two decline cases the smaller set never asked
+about.** It attributed both `latency-jump` and `traffic-surge` to the pricing
+commit, on a mechanism it invented in both — "this new feature likely requires
+an additional call to the payments-service". Nothing in the packet says pricing
+calls payments-service. That is the same failure recorded earlier: a plausible
+story assembled from a subject line, and a mechanism no reviewer could check.
+
+**And one of the new cases was mislabelled by its author.** See below.
+
+### The case I got wrong, and how the model found it
+
+`orphan-refund-bug` was supposed to have no plausible culprit in the window. Its
+first version emitted `RangeError: refund window comparison received a
+non-finite created_at`, and `gemini-2.5-flash` blamed the commit that changed
+`created_at` from epoch milliseconds to an ISO 8601 string:
+
+> This change likely introduced a type mismatch or parsing error in the refund
+> logic, which expects a numeric or finite date value for comparison.
+
+That is a substantive, checkable mechanism, and it is a good answer. It happens
+to be wrong about this repository — `refunds.js` reads `created_at` straight
+from the database, while that commit changed only the *presented* value in
+`orders.js` — but the model cannot see `refunds.js`, because "no candidate
+touches the refund path" is the entire premise of the case.
+
+So the case was measuring whether the model could guess the author's intent, not
+whether it could correlate. **The scenario was changed, not the label**: the
+error now names a refund policy and a sales channel, concepts no commit in the
+window goes near. The fixed case passes on the model that exposed the flaw.
+
+This is the third label or fixture problem this harness has surfaced, after the
+two in §7, and the pattern is worth naming: **a decline case is only as good as
+the absence of a plausible culprit, and plausible is judged from the packet, not
+from the source tree.**
+
+### The number, and why it is not one number yet
+
+On the corrected six-case set, `gemini-2.5-flash` scores:
+
+```
+  named the right commit    2/2   100%
+  declined when it should   4/4   100%
+  right files within it     2/2   100%
+```
+
+That is a clean sweep — and it should be read next to the fact that the *same
+model* scored 1/4 on declining against the previous capture an hour earlier.
+One of those three failures was the mislabelled case, now fixed. The other two,
+`latency-jump` and `traffic-surge`, passed on this capture and failed on that
+one.
+
+Pinning the verdict removed the largest source of drift but evidently not all of
+it. What still varies between captures is the generated traffic — and therefore
+the trigger numbers rendered into the packet — and the fixture commit
+timestamps. Whether that is enough to flip two cases, or whether the sampling
+temperature of 0.1 is doing it, is **not established**: the repeatability check
+(re-running identical stored packets several times) was started and blocked by
+daily quota on both Gemini models.
+
+Until that check runs, treat a single correlation run as one sample, not as a
+measurement. The claim that survives is the one the baseline supports: the tier
+beats "blame the newest commit", which scores 0/2 and 0/4 and has never scored
+anything else.
+
 ### What this does not establish
 
 Four cases and one application shape. The decline half is **2 cases** — the
 thinnest part of the set and the half that matters most, exactly as the benign
 half does for Tier 2.
 
-The instability found by the A/B is fixed — the inherited verdict is pinned, and
-two independent captures now produce identical ones. That removes the largest
-source of drift, not all of it: the generated traffic and the fixture shas still
-vary per capture, so numbers across generations remain a comparison to make
-carefully rather than automatically.
+Six cases now, four of them declines. The inherited verdict is pinned and two
+independent captures produce identical ones, which removed the largest source of
+drift — but not all of it, as the swing described above shows. Repeatability on
+identical packets is untested and is the next thing to measure.
 
 The honest summary of Phase 3: it clearly beats its baseline, which scores zero
-on both accuracy axes and has never scored anything else. Beyond that, four
-cases cannot rank models or settle packet-design questions — one attempt to
-settle such a question is written up above as having failed, and the failure was
-worth more than the answer would have been.
+on both accuracy axes and has never scored anything else. Beyond that, single
+runs are samples. Two attempts to settle a question with this harness are
+written up above — the diff A/B and the decline widening — and both were more
+useful for what they exposed about the harness than for what they said about the
+models.
 
 Reasoning quality is still not measured. `reasoning` is printed for wrong
 answers, because the answer is as often a bad label as a bad model — two of the
