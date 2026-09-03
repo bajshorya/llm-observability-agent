@@ -26,6 +26,8 @@ Phase 0; section 15 covers Phase 1.
 
 ---
 
+
+Beyond the stack fit, I like that it's end-to-end and close to the founding team. The work I've enjoyed most has been owning something across the whole system — frontend, backend, and the messy production debugging in between — rather than a narrow slice. Shipping real features to users on a small team is exactly how I want to work.
 ## 1. What the system is
 
 An **observability agent**. It watches a running application's logs, notices when
