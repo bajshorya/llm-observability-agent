@@ -42,11 +42,11 @@ later one wins — `START-HERE.md` lists the known cases.
 | 4 | Root-cause + fix agent (human-gated) | |
 | 5 | Next.js dashboard with reasoning trace | |
 
-Phase 3 is measured on a four-case set across three models: attribution is 2/2
-everywhere, declining is 1/2 on both Gemini variants and 0/2 on a 3B local
-model, against a "blame-the-newest" baseline that scores 0/2 and 0/2. The one
-shared failure is written up rather than patched — see `DOCUMENTATION-EVALS.md`
-§14.
+Phase 3 is measured on a six-case set — four of them declines, for four
+different reasons. `gemini-2.5-flash` scores 2/2 and 4/4 against a
+"blame-the-newest" baseline of 0/2 and 0/4. Single runs are samples, and the
+harness's own defects are written up alongside the numbers in
+`DOCUMENTATION-EVALS.md` §14.
 
 ---
 
@@ -255,24 +255,29 @@ named commit is dropped and reported. Zod proves the answer is well-*formed*; it
 cannot prove it is *true to the evidence*, and a hallucinated sha would be
 inherited by Phase 4 as established fact.
 
-**It is measured, on four cases.**
+**It is measured, on six cases.**
+
+Six cases: two attributable to different commits, and four declines that are
+four *different* reasons to answer null.
 
 ```
-                          gemini-3.5-flash  gemini-2.5-flash  llama3.2 (3B)  stub
-  named the right commit       2/2               2/2              2/2         0/2
-  declined when it should      1/2               1/2              0/2         0/2
-  right files within it        2/2               2/2              2/2         0/0
-  confidence when right       0.92              0.90             0.80         n/a
-             when wrong       0.60              0.70             0.80        0.25
+                          gemini-2.5-flash   llama3.2 (3B)   stub
+  named the right commit       2/2               1/2 *        0/2
+  declined when it should      4/4               0/4          0/4
+  right files within it        2/2               1/1          0/0
+  confidence                  0.90            0.80 on all six  0.25
 ```
+\* correct by accident — it names the same commit on every case, which is
+exactly what the split scorecard exists to make visible.
 
 The two accuracy rows are never averaged: a model that always names something
 scores 100% and 0%, one that always declines scores the reverse, and blended
 both read as a respectable half.
 
-`llama3.2` reports 0.80 confidence on all four answers, right and wrong alike —
-a number that never varies carries no information, and only the split scorecard
-makes that visible next to its respectable 2/2 attribution.
+A single run is a sample. The same model scored 1/4 on declining against the
+previous capture; one of those failures was a case mislabelled by its author,
+and the other two flipped for reasons not yet established. Repeatability on
+identical packets is the next thing to measure.
 
 A correlation case embeds the classifier's verdict, and re-capturing used to
 change how hard the set was: one case failed on three models in one generation
