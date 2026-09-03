@@ -1,0 +1,8 @@
+{
+  "scenario": "limiter-misconfig",
+  "severity": "high",
+  "summary": "The orders-api is actively shedding load, with the rate limiter rejecting write requests across multiple endpoints (/orders and /orders/:id/refund) due to sustained quota exhaustion.",
+  "affectedArea": "POST /orders and POST /orders/:id/refund write paths",
+  "note": "The limiter is rejecting legitimate writes across hundreds of clients. High: sustained, user-visible, and confined to the write paths.",
+  "capturedFrom": "2026-09-03T07:33:06.165Z"
+}

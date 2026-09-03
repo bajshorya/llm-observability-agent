@@ -9,11 +9,14 @@
 #
 # WHAT IS DIFFERENT FROM THE CLASSIFIER CAPTURE
 #
-# 1. IT NEEDS TIER 2 FIRST. Correlation only sees incidents Tier 2 confirmed, so
-#    every case costs one classification call as well. That is why this script
-#    defaults to a real provider rather than the stub: a packet containing a
-#    stub summary ("no model was called") is not a realistic artefact to score
-#    a correlator against.
+# 1. IT CALLS NO MODEL AT ALL. A correlation packet embeds Tier 2's verdict, and
+#    re-deriving that from a model on every capture is what made the set's
+#    difficulty drift between generations — one case failed on three models in
+#    one capture and passed on two in the next, with no packet change. The
+#    verdict is now pinned in src/eval/verdicts/ and read from there, so a
+#    re-capture is comparable to the capture before it.
+#
+#    The pinned verdicts are real Tier 2 output, recorded rather than redrawn.
 #
 # 2. IT REBUILDS THE FIXTURE WITH --anchor now. The fixture's pinned anchor sits
 #    on the date the classifier cases were captured; traffic generated today
@@ -28,8 +31,7 @@
 #    matches none. A case expecting a commit its own evidence does not contain
 #    would score every model wrong forever and look like a model problem.
 #
-#   bash scripts/capture-correlation-cases.sh              # uses LLM_PROVIDER
-#   bash scripts/capture-correlation-cases.sh gemini       # or name one
+#   bash scripts/capture-correlation-cases.sh
 #
 #   CAPTURE_CONTROL=1 bash scripts/capture-correlation-cases.sh gemini
 #     also stores a with-hunks arm per scenario as diff-<scenario>, captured
@@ -42,7 +44,6 @@ WORK="$REPO/.tmp/capture-correlation"
 PORT=4300
 BASELINE_MINUTES=120
 INJECT_MINUTES=5
-PROVIDER="${1:-}"
 # Set to 1 to also capture a WITH-HUNKS arm per scenario, named diff-<scenario>,
 # for measuring what the hunks are worth. Hunks are off in the shipped packet;
 # see DOCUMENTATION-EVALS.md §14 for the A/B that decided that.
@@ -104,18 +105,9 @@ run_case() {
     return 1
   fi
 
-  # Correlation only sees confirmed incidents, so Tier 2 has to run first.
-  if [ -n "$PROVIDER" ]; then
-    pnpm classify --provider "$PROVIDER" 2>&1 | grep -E "orders-api|    "
-  else
-    pnpm classify 2>&1 | grep -E "orders-api|    "
-  fi
-
-  if [ "$(sqlite3 "$db" 'SELECT count(*) FROM anomalies WHERE is_real_incident = 1')" = "0" ]; then
-    echo "!!! DISMISSED — Tier 2 called $scenario benign, so correlation never sees it"
-    unset DATABASE_URL
-    return 1
-  fi
+  # No classification call. The verdict comes from src/eval/verdicts/, pinned,
+  # because re-deriving it from a model on every capture is what made the set's
+  # difficulty drift between generations. See src/eval/verdicts.ts.
 
   local args=(--correlation --capture "$scenario" --scenario "$scenario" --sha "$sha" --note "$note")
   [ -n "$files" ] && args+=(--files "$files")

@@ -45,6 +45,7 @@ import { renderContextForIncident } from "../correlation/correlate";
 import { resolveCandidateSha } from "../correlation/grounding";
 import { loadCorrelationCases, saveCorrelationCase, type CorrelationCase } from "./correlation-cases";
 import { runCorrelationEval } from "./run-correlation";
+import { loadPinnedVerdict } from "./verdicts";
 import type { CorrelationCaseScore, CorrelationSummary } from "./score-correlation";
 import { severities, type Severity } from "@obs/shared";
 import { renderContextForAnomaly } from "../classification/classify";
@@ -184,12 +185,29 @@ async function captureCorrelation(
    * whatever else differed — different traffic, different fixture shas, and
    * (as it turned out to matter most) a different classifier summary.
    */
-  const rendered = await renderContextForIncident(undefined, {}, {
-    diffs: values["diff"] === true,
-  });
+  /**
+   * The classifier's verdict is PINNED rather than read from the row. That is
+   * what makes a re-capture comparable to the capture before it: without it,
+   * half the packet is a fresh model answer and the set's difficulty drifts.
+   * See `verdicts.ts`.
+   */
+  const scenario = (values["scenario"] as string | undefined) ?? name;
+  const verdict = loadPinnedVerdict(scenario);
+
+  const rendered = await renderContextForIncident(
+    undefined,
+    {
+      verdict: {
+        severity: verdict.severity,
+        summary: verdict.summary,
+        affectedArea: verdict.affectedArea,
+      },
+    },
+    { diffs: values["diff"] === true },
+  );
   if (!rendered) {
     throw new Error(
-      "No real incidents in the database. Inject a scenario, then run `pnpm detect` and `pnpm classify`.",
+      "No anomalies in the database. Inject a scenario and run `pnpm detect` first.",
     );
   }
 
@@ -215,7 +233,7 @@ async function captureCorrelation(
 
   const golden: CorrelationCase = {
     name,
-    scenario: (values["scenario"] as string | undefined) ?? name,
+    scenario,
     capturedAt: new Date().toISOString(),
     expect: {
       suspectedCommitSha: expected,
@@ -227,6 +245,7 @@ async function captureCorrelation(
 
   const path = saveCorrelationCase(golden);
   console.log(`Captured correlation case "${name}" from anomaly ${rendered.anomalyId.slice(0, 8)}`);
+  console.log(`  verdict: pinned from ${scenario}.json (${verdict.severity}, ${verdict.affectedArea})`);
   console.log(
     `  expect: ${expected ? expected.slice(0, 10) : "no commit"} from ${rendered.commits.length} candidate(s)`,
   );
