@@ -8,7 +8,7 @@
  *
  * WHY THE NATIVE API RATHER THAN GOOGLE'S OpenAI-COMPATIBLE SHIM
  * Two things we want exist only on the native surface.
- *
+ * 
  * 1. `responseMimeType: "application/json"` — JSON mode. This constrains
  *    SYNTAX, not semantics: a model can still return perfectly valid JSON with
  *    a severity of "quite bad", which is why Zod validation stays regardless.
