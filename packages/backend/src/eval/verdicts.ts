@@ -65,6 +65,13 @@ export const pinnedVerdictSchema = z.object({
   note: z.string(),
   /** When the real Tier 2 run that produced it was captured. */
   capturedFrom: z.string(),
+  /**
+   * Which model produced it. Recorded because the pins are not all from one
+   * model — free-tier quota is per model and per day, so a scenario added when
+   * the default was exhausted was pinned from another. Re-pinning the whole set
+   * from one model is worth doing and has not been done.
+   */
+  model: z.string().min(1),
 });
 
 export type PinnedVerdict = z.infer<typeof pinnedVerdictSchema>;

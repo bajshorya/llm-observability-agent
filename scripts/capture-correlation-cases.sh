@@ -135,6 +135,10 @@ run_case() {
 # Labels carry their reasoning in --note, so a disagreement is with a stated
 # argument rather than a bare sha.
 #
+# NOTE ON `orphan-refund-bug`: its null label is true at the DEFAULT 48-hour
+# lookback, which is what excludes the commit that really caused it. Capture it
+# with a wider --lookback and the label becomes wrong rather than hard.
+#
 # The two attributable cases point at DIFFERENT commits on purpose. With one,
 # "finds the guilty commit" and "has learned the answer is the pricing one"
 # score identically.
@@ -153,6 +157,14 @@ run_case error-spike none "" \
 
 run_case latency-jump none "" \
   "p95 degraded across every endpoint with no new error signature and no commit touching a latency-sensitive path; nothing in the diff explains it"
+
+# The decline half is deliberately three DIFFERENT reasons to answer null. Two
+# cases that both mean "upstream is failing" measure one thing twice.
+run_case traffic-surge none "" \
+  "Volume 5x baseline saturating a pool sized in the initial scaffold; the load changed and the code did not, and no commit in the window touches capacity"
+
+run_case orphan-refund-bug none "" \
+  "A novel error, which is the strongest signal that code changed — but the change is nine days old and outside the lookback. No candidate touches src/routes/refunds.js, so the honest answer is that none of them explains it"
 
 echo ""
 echo "=== captured"

@@ -1,0 +1,9 @@
+{
+  "scenario": "traffic-surge",
+  "severity": "critical",
+  "summary": "The orders-api is experiencing high error rates and latency due to timeouts when contacting the payments-service, exacerbated by connection pool saturation and lack of autoscaling capacity.",
+  "affectedArea": "payments-service dependency and orders-api capacity",
+  "note": "Volume 5x baseline with saturation-driven timeouts. Tier 2 called it critical; the label for correlation is null either way, because load changed and code did not.",
+  "capturedFrom": "2026-09-03",
+  "model": "gemini-2.5-flash"
+}

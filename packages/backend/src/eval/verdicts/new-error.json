@@ -4,5 +4,6 @@
   "summary": "A new TypeError (Cannot read properties of null reading 'toFixed') is causing 500 Internal Server Errors across multiple endpoints including /orders, /orders/:id, and /orders/:id/refund.",
   "affectedArea": "orders-api endpoints",
   "note": "A novel TypeError returning 500s on order read paths. Critical: a core user-facing flow is failing and a code change is shipping the fault.",
-  "capturedFrom": "2026-09-03T07:32:56.566Z"
+  "capturedFrom": "2026-09-03T07:32:56.566Z",
+  "model": "gemini-3.5-flash"
 }

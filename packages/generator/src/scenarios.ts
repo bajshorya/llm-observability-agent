@@ -20,16 +20,30 @@
  * in normal operation — timeouts, 404s and 429s. Those baseline errors are what
  * the new-signature detector must NOT flag as novel.
  *
- * THE SEVEN SCENARIOS, AND THE SPLIT THAT MATTERS
- * Four are real incidents; three are benign windows that trip Tier 1 anyway.
+ * THE NINE SCENARIOS, AND THE SPLITS THAT MATTER
+ * Six are real incidents; three are benign windows that trip Tier 1 anyway.
  *
  *   error-spike        incident  40× error rate from known failure kinds
  *   latency-jump       incident  p95 ×8 across every endpoint, no new errors
  *   new-error          incident  a novel TypeError returning 500s
  *   limiter-misconfig  incident  a rate limiter rejecting legitimate traffic
+ *   traffic-surge      incident  volume ×5; nothing is broken, everything is full
+ *   orphan-refund-bug  incident  a novel failure on a path no recent commit touched
  *   deploy-restart     BENIGN    a burst that recovers inside the window
  *   batch-job          BENIGN    a background path is slow; users are fine
  *   rate-limit-storm   BENIGN    one client throttled; nothing else degrades
+ *
+ * THE SECOND SPLIT — incident vs benign is Tier 2's question. Phase 3 asks a
+ * different one of the six incidents: does a recent commit explain this?
+ *
+ *   new-error, limiter-misconfig     yes, and different commits
+ *   error-spike, latency-jump        no — an upstream dependency
+ *   traffic-surge                    no — the load changed, not the code
+ *   orphan-refund-bug                no — the responsible change is older
+ *                                    than the lookback and is not offered
+ *
+ * The last three are deliberately three DIFFERENT reasons to decline. Two
+ * decline cases that both mean "upstream is failing" measure one thing twice.
  *
  * `limiter-misconfig` was added for Phase 3 rather than Phase 2, and it is the
  * only scenario whose primary job is CORRELATION. Its cause is a different
@@ -133,6 +147,8 @@ export const SCENARIO_NAMES = [
   "batch-job",
   "rate-limit-storm",
   "limiter-misconfig",
+  "traffic-surge",
+  "orphan-refund-bug",
 ] as const;
 export type ScenarioName = (typeof SCENARIO_NAMES)[number];
 
@@ -184,7 +200,14 @@ export interface Scenario {
  */
 export interface ContextLine {
   message: string;
-  level: "info" | "warn";
+  /**
+   * `error` was added when a scenario needed to fail requests on ONE endpoint
+   * rather than across the traffic mix. `scenario.error` applies to whichever
+   * endpoint the sampler happened to pick, which is right for a service-wide
+   * fault and wrong for one confined to a single path — and "confined to one
+   * path" is exactly what distinguishes several interesting incidents.
+   */
+  level: "info" | "warn" | "error";
   offsetMs?: number;
   /** Present when this line represents a real request rather than narration. */
   endpoint?: string;
@@ -202,6 +225,14 @@ const RESTART_PHASE = 0.2;
  */
 const BATCH_OPS_PER_WINDOW = 45;
 const BATCH_SKIPS_PER_WINDOW = 12;
+
+/**
+ * Refund failures per generated window. Enough to clear the error-rate
+ * detector's absolute floor against a baseline of ~2 errors a minute, and small
+ * enough that the service-wide error rate stays low — which is the shape of a
+ * fault confined to one endpoint.
+ */
+const ORPHAN_REFUND_FAILURES = 28;
 
 export const SCENARIOS: Record<ScenarioName, Scenario> = {
   "error-spike": {
@@ -347,6 +378,153 @@ export const SCENARIOS: Record<ScenarioName, Scenario> = {
    * six-fold, which made "other clients unaffected" a claim the data flatly
    * contradicted.
    */
+  /**
+   * Load, not breakage. Nothing is wrong with the code; there is simply more
+   * work than the service was sized for.
+   *
+   * WHY IT IS AN INCIDENT
+   * Users are waiting. p95 climbs because every shared resource is contended
+   * and the connection pool is saturated, and the timeouts that follow are
+   * real failures on real requests. "Nobody shipped a bug" is not the same
+   * claim as "nobody is affected".
+   *
+   * WHY THE CORRECT CORRELATION IS NULL
+   * The load changed; the code did not. No commit in a 48-hour window explains
+   * a fivefold traffic increase, and the pool size it saturates was set in the
+   * initial scaffold — nine days old and far outside the lookback.
+   *
+   * This is a DIFFERENT reason to decline than `error-spike` and
+   * `latency-jump`, which both bottom out at "an upstream dependency is
+   * failing". A decline set where every case means the same thing measures one
+   * thing several times.
+   */
+  "traffic-surge": {
+    description: "Request volume jumps 5x; latency and timeouts follow, but nothing is broken",
+    benign: false,
+    profile: (base) => ({
+      ...base,
+      requestsPerMinute: base.requestsPerMinute * 5,
+      // Contention, not a regression: everything queues behind a pool that is
+      // full, and the tail suffers far more than the median.
+      latencyMedianMs: base.latencyMedianMs * 2.5,
+      latencyTailFactor: base.latencyTailFactor * 2,
+      errorRate: 0.06,
+    }),
+    error: {
+      // The failure mode of saturation, and one already in the baseline — so
+      // this reads as volume rather than as something new.
+      message: (rng) =>
+        `Upstream timeout contacting payments-service after ${rng.pick([2500, 3000, 5000])}ms`,
+      errorType: "UpstreamTimeoutError",
+      statusCode: 504,
+    },
+    context: (_windowStart, rng, progress) => [
+      {
+        level: "warn",
+        message:
+          `Request volume ${(rng.int(48, 56) / 10).toFixed(1)}x seven-day baseline; ` +
+          `connection pool saturated at 20 of 20, ${rng.int(180, 340)} requests queued`,
+      },
+      ...(progress > 0.4
+        ? [
+            {
+              level: "warn" as const,
+              message:
+                "Sustained saturation: no capacity headroom on any instance, " +
+                "autoscaler at configured maximum of 3",
+              offsetMs: 25_000,
+            },
+          ]
+        : []),
+    ],
+  },
+
+  /**
+   * A real code bug whose cause is older than the lookback.
+   *
+   * WHY THIS EXISTS
+   * The other decline cases have no code cause at all. This one does — and the
+   * commit that introduced it is nine days old, so the correlator is never
+   * shown it. The correct answer given the evidence is still null.
+   *
+   * That makes it the hardest decline in the set, and the most realistic. A
+   * novel error signature is the strongest single signal that CODE CHANGED,
+   * and the prompt says so. Here that signal is true and the change is not on
+   * offer, so the model must resist the pull of "a novel error appeared,
+   * therefore one of these commits did it".
+   *
+   * The refund path is chosen because no commit inside a 48-hour window
+   * touches `src/routes/refunds.js` — the route was added on day 7 of the
+   * fixture history. Every candidate the model sees touches pricing, orders,
+   * CI, docs or the rate limiter.
+   *
+   * THE ERROR TEXT IS ORTHOGONAL ON PURPOSE, AND WAS NOT AT FIRST
+   * The first version said "refund window comparison received a non-finite
+   * created_at". `gemini-2.5-flash` blamed the commit that changed `created_at`
+   * to an ISO string, reasoning that a string would break a numeric window
+   * comparison — a substantive, checkable mechanism, and a good answer.
+   *
+   * It happens to be wrong about this repository, because `refunds.js` reads
+   * `created_at` straight from the database while that commit only changed the
+   * PRESENTED value in `orders.js`. But the model cannot see `refunds.js` —
+   * that is the whole premise of the case — so it could not have known.
+   *
+   * The case was supposed to have no plausible culprit and accidentally had a
+   * very plausible one. Penalising a model for a well-reasoned inference from
+   * the evidence it was given measures whether it guessed the author's intent,
+   * not whether it can correlate. So the error now names a refund policy and a
+   * sales channel, concepts no commit in the window goes anywhere near.
+   *
+   * A NOTE ON THE LABEL'S FRAGILITY
+   * "Null" is correct for the packet as captured, at the default 48-hour
+   * lookback. Widen the lookback far enough and the refunds commit becomes a
+   * candidate, at which point naming it would be right. The case stores its
+   * rendered packet, so the label stays true to the evidence it was captured
+   * with — but re-capture it with a different `--lookback` and it becomes a
+   * mislabelled case rather than a hard one.
+   *
+   * WHY THE ERRORS ARE EMITTED THROUGH `context`
+   * `scenario.error` applies to whichever endpoint the sampler picks, which
+   * would spread refund failures across every path and destroy the point. This
+   * confines them to one route, which is what makes "no candidate touches this
+   * file" a checkable observation rather than a coincidence.
+   */
+  "orphan-refund-bug": {
+    description:
+      "A novel failure confined to the refund path, caused by a change older than the lookback",
+    benign: false,
+    // User traffic is untouched; the failing requests are emitted below so they
+    // land on one endpoint rather than across the mix.
+    profile: (base) => base,
+    context: (_windowStart, rng, progress) => {
+      const lines: ContextLine[] = [];
+
+      for (let i = 0; i < ORPHAN_REFUND_FAILURES; i += 1) {
+        lines.push({
+          level: "error",
+          message:
+            `IllegalStateError: no refund policy configured for order channel ` +
+            `'marketplace' (order ${rng.int(10_000, 99_999)})`,
+          endpoint: "/orders/:id/refund",
+          statusCode: 500,
+          latencyMs: rng.latency(120, 2),
+          offsetMs: rng.int(0, 59_000),
+        });
+      }
+
+      if (progress > 0.3) {
+        lines.push({
+          level: "warn",
+          message:
+            "Refund failures confined to /orders/:id/refund; order reads and writes unaffected",
+          offsetMs: 40_000,
+        });
+      }
+
+      return lines;
+    },
+  },
+
   /**
    * The rate limiter turned on legitimate traffic.
    *
