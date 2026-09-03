@@ -1453,6 +1453,59 @@ measurement. The claim that survives is the one the baseline supports: the tier
 beats "blame the newest commit", which scores 0/2 and 0/4 and has never scored
 anything else.
 
+### Chasing the noise floor, and what it narrowed to
+
+The swing above — 1/4 declining on one capture, 4/4 on the next — has two
+candidate explanations: the packets differed, or the model is not deterministic.
+The direct test is to re-run identical stored packets several times. It was
+attempted and is **not finished**: daily quota ran out on all three Gemini
+models mid-run, and a broken output parser meant the calls that did land were
+not recorded. Wasted quota, and the parser should have been validated on one
+call first.
+
+What could be established without quota narrows it considerably.
+
+**Capture variance is essentially gone.** Comparing the same case across three
+committed generations:
+
+```
+  gen1 (pre-pin)   area = /orders endpoints            p95 1273ms (7.88x)
+  gen2 (pinned)    area = payments-service dependency  p95 1427ms (8.44x)
+  gen3 (widened)   area = payments-service dependency  p95 1403ms (8.3x)
+```
+
+The pin did what it was supposed to: gen2 and gen3 are qualitatively identical
+where gen1 differs. And the candidate half — every commit's short sha, age and
+subject — is **byte-identical** between gen2 and gen3. The only residual
+difference is trigger magnitude, about 2%.
+
+**So the flip is unlikely to be the packet.** Two decline decisions changed
+between adjacent captures whose evidence differs by 2% on one number. That
+points at model sampling.
+
+The inference has a gap worth naming: the capture the 1/4 was measured on was
+never committed, so its similarity to gen3 is inferred from the two generations
+either side of it rather than shown directly. Commit intermediate captures if
+this needs settling properly.
+
+**The local model is perfectly repeatable and it does not help.** `llama3.2`
+gave byte-identical answers across three full runs of all six cases — 18/18. It
+also answers the same commit to every case regardless of evidence, and a model
+that ignores its input is trivially stable. It measures the plumbing, not the
+question.
+
+**One assumption turned out to be untested.** `llmConfig.temperature` is 0.1,
+and the comment beside it claimed this "keeps the same window classifying the
+same way across runs, which is what makes the eval harness meaningful". That was
+an assumption written as fact, it has been carried since Phase 2, and the
+evidence above is against it. The comment now says so.
+
+`LLM_TEMPERATURE` overrides it, so the outstanding test is a command rather than
+a code change: run the same stored packets at 0 and at 0.1, several times each,
+and compare. A benchmark arguably wants 0 outright, or N samples with a reported
+spread — but that is a change to evaluation method and should follow the
+measurement, not precede it.
+
 ### What this does not establish
 
 Four cases and one application shape. The decline half is **2 cases** — the

@@ -931,6 +931,7 @@ Environment (`.env`, all optional — defaults work):
 | `DATABASE_URL` | `file:./data/dev.db` | `file:` prefix stripped by the client |
 | `LLM_PROVIDER` | `stub` | `gemini \| nvidia \| openrouter \| ollama \| stub` |
 | `LLM_MODEL` | per provider | Overrides the default model |
+| `LLM_TEMPERATURE` | 0.1 | Sampling override, for measuring eval repeatability |
 | `GEMINI_API_KEY` | — | Free tier, no card |
 | `NVIDIA_API_KEY` | — | Free developer tier |
 | `OPENROUTER_API_KEY` | — | Free `:free` variants |
@@ -1061,10 +1062,11 @@ that isn't there.
 
 **A single correlation run is a sample, not a measurement.** `gemini-2.5-flash`
 scored 1/4 declining on one capture and 4/4 on the next. One of those failures
-was a mislabelled case, now fixed; the other two flipped for reasons not
-established. Repeatability on identical stored packets is untested and
-quota-blocked, so this harness's noise floor is unknown — which also means the
-hunks A/B could not have resolved anything smaller than it.
+was a mislabelled case, now fixed; the other two flipped between packets that
+are byte-identical in the candidate half and differ by ~2% on one trigger
+number. Model sampling at temperature 0.1 is the leading explanation and the
+direct test is quota-blocked, so the noise floor is still unknown — which also
+means the hunks A/B could not have resolved anything smaller than it.
 
 **The packet cannot exonerate an innocent commit.** With no diff content,
 `src/routes/orders.js +2/-1` could be a string format or a synchronous network
@@ -1111,10 +1113,11 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-Phase 3 is complete as code. Tier 2's verdict is pinned and the decline half is
-four. What it needs next is a **repeatability measurement** — re-run identical
-stored packets several times and see how far a score moves on its own. Every
-other open question here, the hunks A/B included, is downstream of that number.
+Phase 3 is complete as code. Tier 2's verdict is pinned, the decline half is
+four, and capture variance is narrowed to ~2% on one number. What it needs next
+is the **repeatability measurement** — the same stored packets at
+`LLM_TEMPERATURE=0` and at 0.1, several times each. It is a command now rather
+than a code change, and every other open question here is downstream of it.
 
 One decision precedes the golden cases — whether `deploy-restart`'s fabricated
 deploy sha becomes a real one. It would make the strongest `null` test in the
