@@ -166,7 +166,7 @@ checkable, not just claimed.
 In every module, the code that *decides* has no database, clock, or network:
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `json.ts`,
 `grounding.ts`, `score.ts`. The code that *persists* is separate: `engine.ts`,
-`rollup.ts`, `classify.ts`, `calls.ts`. This is why 150 tests run in ~300 ms with
+`rollup.ts`, `classify.ts`, `calls.ts`. This is why 157 tests run in ~300 ms with
 no fixtures. **When hunting for logic, it is in a pure file.**
 
 **3 · Everything crossing a boundary is validated with Zod.**
@@ -750,7 +750,10 @@ shell — and validates the result.
 cases cannot tune them. `--until` is the end of the anomaly window, so a commit that
 postdates its supposed effect is never fetched and never offered.
 
-**`context.ts`** (280 lines) — the correlation evidence packet, **pure**. Two
+**`context.ts`** (~380 lines) — the correlation evidence packet, **pure**. It
+can render unified diffs (`{ diffs: true }`) and does not by default: a
+controlled A/B cost one regression, showed no reproducible benefit, and grew the
+packet 3.7×. See §19 and `DOCUMENTATION-EVALS.md` §14. Two
 halves with a seam: the incident (severity, affected area, the classifier's
 summary, the detector evidence) and the candidates (sha, timestamp, age relative
 to the window, author, subject, body, files).
@@ -933,7 +936,7 @@ Code-level tunables live in `detection/config.ts` (thresholds),
 pnpm install && pnpm db:push        # setup
 pnpm backend                        # ingestion API on :4000
 pnpm typecheck                      # strict TS, all packages
-pnpm test                           # 150 unit tests, ~300ms, no network
+pnpm test                           # 157 unit tests, ~300ms, no network
 
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -965,7 +968,7 @@ bash scripts/build-fixture-repo.sh --anchor now   # for a live demo; different s
 
 ## 18. Testing strategy
 
-Ten test files, 150 tests, ~300 ms, no network or database.
+Ten test files, 157 tests, ~300 ms, no network or database.
 
 | File | Covers |
 |---|---|
@@ -1046,11 +1049,17 @@ fails on every model tested. Attribution is 2/2 across two different commits on
 all three; declining is 1/2 on both Gemini variants and 0/2 on `llama3.2`,
 against a baseline of 0/2 and 0/2.
 
-**The packet cannot exonerate an innocent commit.** This is the diagnosis behind
-that failure. With no diff content, `src/routes/orders.js +2/-1` could be a
-string format or a synchronous network call, and a model has no way to rule the
-commit out. The same no-hunks trade that makes a bug invisible when it is only
-in the diff also makes innocence invisible. `DOCUMENTATION-EVALS.md` §14.
+**The packet cannot exonerate an innocent commit.** With no diff content,
+`src/routes/orders.js +2/-1` could be a string format or a synchronous network
+call. Hunks were built to fix this and measured; the A/B did not support
+adopting them, so they are off by default. `DOCUMENTATION-EVALS.md` §14.
+
+**Correlation cases inherit the classifier's variance.** A case embeds Tier 2's
+summary, so a re-capture can silently swap a hard case for an easy one — one
+case failed on three models in one generation and passed on two in the next with
+no packet change. Correlation scores are comparable within a capture generation,
+not across them. The classifier set does not have this problem: its cases embed
+detector output and log text, which are generated but not reasoned.
 
 **Four correlation cases, and only two of them decline.** The decline half is
 the part that distinguishes the tier from its baseline, and it is the thinnest
@@ -1085,10 +1094,11 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-Phase 3 is complete. Two things would improve it, in order: **diff content in
-the packet**, which the cross-model run identified as the reason an innocent
-commit cannot be ruled out, and **more decline cases** — that half is two, the
-thinnest and most important part of the set.
+Phase 3 is complete as code. What it needs is a better golden set, and in this
+order: **stability** (pin the classifier verdict per case, or capture several
+draws per scenario, so difficulty stops drifting between captures) and then
+**more decline cases** — that half is two. Both the hunks question and the
+decline axis are blocked on the first.
 
 One decision precedes the golden cases — whether `deploy-restart`'s fabricated
 deploy sha becomes a real one. It would make the strongest `null` test in the

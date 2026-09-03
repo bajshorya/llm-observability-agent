@@ -65,7 +65,11 @@ import { recordLlmCall } from "../llm/calls";
 import { createProvider } from "../llm";
 import { generateStructured } from "../llm/structured";
 import type { LlmProvider } from "../llm/types";
-import { renderCorrelationContext, type CorrelationInput } from "./context";
+import {
+  renderCorrelationContext,
+  type CorrelationInput,
+  type RenderCorrelationOptions,
+} from "./context";
 import { collectCommits, defaultLookback } from "./git";
 import { groundCorrelation, type GroundedCorrelation } from "./grounding";
 import { CORRELATOR_SYSTEM_PROMPT } from "./prompt";
@@ -343,6 +347,7 @@ export interface RenderedCorrelationContext {
 export async function renderContextForIncident(
   anomalyId?: string,
   options: CorrelateOptions = {},
+  render: RenderCorrelationOptions = {},
 ): Promise<RenderedCorrelationContext | null> {
   const [incident] = anomalyId
     ? await db.select(INCIDENT_COLUMNS).from(anomalies).where(eq(anomalies.id, anomalyId))
@@ -361,7 +366,7 @@ export async function renderContextForIncident(
     anomalyId: incident.id,
     service: incident.service,
     candidateCount: input.commits.commits.length,
-    context: renderCorrelationContext(input),
+    context: renderCorrelationContext(input, render),
     commits: input.commits.commits,
   };
 }

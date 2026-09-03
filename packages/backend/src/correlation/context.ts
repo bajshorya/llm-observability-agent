@@ -81,11 +81,27 @@
  * two spaces, the short sha, two spaces, an ISO date — is load-bearing beyond
  * readability. `llm/providers/stub.ts` says so too.
  *
- * NO DIFF CONTENT
- * Subjects, bodies and per-file line counts, not hunks. Hunks are the obvious
- * next increment and would roughly triple the packet. Worth doing only once
- * there is a measurement showing the line counts are not enough — which today
- * there is not, in either direction.
+ * DIFF CONTENT: BUILT, MEASURED, AND LEFT OFF BY DEFAULT
+ * The packet carries subjects, bodies and per-file line counts, not hunks.
+ * `renderCorrelationContext` CAN render hunks — pass `{ diffs: true }` — and
+ * the default is off because a controlled A/B did not support turning it on.
+ *
+ * The argument for hunks was good and is still good: counts can implicate a
+ * commit but cannot EXONERATE one. `src/routes/orders.js +2/-1` might be a
+ * string format or a synchronous network call, and every model tested once
+ * attributed a latency incident to exactly such a commit.
+ *
+ * What the A/B found, on cases captured from identical incidents so the arms
+ * differed only in the hunks:
+ *
+ *   - the failure that motivated the change did not reproduce, in either arm,
+ *     on either model — the re-captured case was materially easier
+ *   - the diff arm caused one regression the control arm did not, on one model
+ *   - the packet grew 3.7×
+ *
+ * So the change is unmotivated by current evidence, has one observed harm, and
+ * costs quota on a free tier. Off by default until the golden set is large and
+ * stable enough to answer the question. `DOCUMENTATION-EVALS.md` §14.
  */
 
 import type { AnomalyTrigger, CandidateCommit, CommitWindow, Severity } from "@obs/shared";
@@ -121,6 +137,25 @@ export const correlationBudget = {
    * on and a truncated stack frame is worth less than none.
    */
   maxErrorChars: 300,
+  /**
+   * Diff lines per commit. The expensive budget in this packet by a wide
+   * margin — a full diff of a twelve-file refactor is longer than everything
+   * else combined.
+   *
+   * 40 covers the small, focused commits that are the interesting candidates
+   * and truncates the sprawling ones, which is the right way round: a commit
+   * that rewrote sixty files is rarely the answer to "which change broke this
+   * endpoint", and its first forty lines say "this was a refactor" as clearly
+   * as all six hundred would.
+   */
+  maxDiffLinesPerCommit: 40,
+  /**
+   * Diff lines across the whole packet, spent newest-first until exhausted.
+   * A 25-commit window at 40 lines each would be 1000 lines of patch on its
+   * own; this is the cap that stops a wide lookback producing a prompt nobody
+   * sized.
+   */
+  maxDiffLinesTotal: 300,
 } as const;
 
 export interface CorrelationInput {
@@ -180,7 +215,38 @@ function describeChange(added: number | null, deleted: number | null): string {
  * return, and the files close because they are what `changedFilesImplicated`
  * has to be drawn from.
  */
-function renderCommit(commit: CandidateCommit, windowEnd: Date): string {
+export interface RenderCorrelationOptions {
+  /**
+   * Include unified diffs. **Default false** — see the header for the
+   * measurement that decided this. The capability is kept so the question can
+   * be reopened when the golden set is big enough to answer it.
+   */
+  diffs?: boolean;
+}
+
+/**
+ * The diff, trimmed to a line budget and told how much was cut.
+ *
+ * Truncation is by LINE and from the top, not by character: a patch cut
+ * mid-hunk still reads as a patch, whereas a character cut mid-line produces
+ * something that looks like corrupted evidence. The elision count is printed
+ * for the same reason every other budget prints one — a silently shortened
+ * diff invites the model to conclude a commit is smaller than it is.
+ */
+function renderDiff(diff: string, budget: number): string[] {
+  const lines = diff.split("\n");
+  const allowed = Math.min(budget, correlationBudget.maxDiffLinesPerCommit);
+
+  if (lines.length <= allowed) return lines;
+
+  return [...lines.slice(0, allowed), `… ${lines.length - allowed} more diff line(s)`];
+}
+
+function renderCommit(
+  commit: CandidateCommit,
+  windowEnd: Date,
+  diffBudget: number,
+): string {
   const lines: string[] = [
     `  ${commit.sha.slice(0, 10)}  ${stamp(commit.committedAt)}  ` +
       `${describeAge(commit.committedAt, windowEnd)}  —  ${commit.author}`,
@@ -210,7 +276,22 @@ function renderCommit(commit: CandidateCommit, windowEnd: Date): string {
     if (elided > 0) lines.push(`      … and ${elided} more`);
   }
 
+  if (diffBudget > 0 && commit.diff) {
+    lines.push("    diff:");
+    for (const line of renderDiff(commit.diff, diffBudget)) {
+      // Indented under the commit, so a patch's own `---` and `+++` lines
+      // cannot be read as structure belonging to the packet.
+      lines.push(`      ${line}`);
+    }
+  }
+
   return lines.join("\n");
+}
+
+/** How many diff lines this commit will consume, for the running total. */
+function diffCost(commit: CandidateCommit, budget: number): number {
+  if (budget <= 0 || !commit.diff) return 0;
+  return Math.min(commit.diff.split("\n").length, correlationBudget.maxDiffLinesPerCommit);
 }
 
 /**
@@ -221,7 +302,11 @@ function renderCommit(commit: CandidateCommit, windowEnd: Date): string {
  * know the difference between "we found nothing" and "we did not look", because
  * only one of those makes `null` the correct answer rather than a guess.
  */
-export function renderCorrelationContext(input: CorrelationInput): string {
+export function renderCorrelationContext(
+  input: CorrelationInput,
+  options: RenderCorrelationOptions = {},
+): string {
+  const withDiffs = options.diffs === true;
   const windowMinutes = Math.max(
     1,
     Math.round((input.windowEnd.getTime() - input.windowStart.getTime()) / 60_000),
@@ -271,12 +356,27 @@ export function renderCorrelationContext(input: CorrelationInput): string {
     const shown = commits.slice(0, correlationBudget.maxCommits);
     const elided = commits.length - shown.length;
 
+    /**
+     * The total diff budget is spent newest-first and simply runs out. Commits
+     * past that point are still shown, with their subjects, bodies and file
+     * counts — they are just shown without hunks, which is the pre-diff packet
+     * for those entries. Dropping them entirely to make room would be worse:
+     * a candidate the model never sees cannot be ruled out either.
+     */
+    let remaining = withDiffs ? correlationBudget.maxDiffLinesTotal : 0;
+    const rendered: string[] = [];
+
+    for (const commit of shown) {
+      rendered.push(renderCommit(commit, input.windowEnd, remaining));
+      remaining -= diffCost(commit, remaining);
+    }
+
     sections.push(
       [
         `Candidate commits (${commits.length}), searched ${since.toISOString()} to ` +
           `${until.toISOString()}, newest first:`,
         "",
-        shown.map((commit) => renderCommit(commit, input.windowEnd)).join("\n\n"),
+        rendered.join("\n\n"),
         ...(elided > 0 ? ["", `  … and ${elided} older commits not shown`] : []),
       ].join("\n"),
     );

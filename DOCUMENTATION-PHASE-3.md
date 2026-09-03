@@ -653,9 +653,10 @@ Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
 
 ## 11. Verified behaviour
 
-`pnpm typecheck` clean. **150 tests pass**, up from 81 — 15 for the parser, 13
-for the packet, 6 for prompt discipline, 11 for grounding, 4 for the stub's new
-baseline and 21 for the correlation scorer. None touch a filesystem or database.
+`pnpm typecheck` clean. **157 tests pass**, up from 81 — 19 for the parser and
+packet, 6 for prompt discipline, 11 for grounding, 4 for the stub's baseline, 21
+for the correlation scorer and 6 for diff rendering. None touch a filesystem or
+a database.
 
 The collector against the real fixture, for the golden window ending
 `2026-08-16T19:02Z`:
@@ -737,20 +738,26 @@ commits — `gemini-3.5-flash` the token bucket, `gemini-2.5-flash` and `llama3.
 the pricing change. Different culprits, same failure, so it is not one model's
 quirk.
 
-That cross-model run changed where the fix belongs. The instinct is to tighten
-the prompt; the evidence says otherwise. The packet offers `src/routes/orders.js
-+2/-1` for the pricing commit and no diff content, so a model cannot tell
-whether those two lines are a string format or a synchronous network call. The
-deliberate no-hunks trade in §14 below was recorded as "a bug visible only in
-the diff is invisible to the agent" — this is the same limitation from the other
-side: an innocent commit touching the affected path cannot be **exonerated**.
+That pointed at the evidence rather than the prompt: the packet offers
+`src/routes/orders.js +2/-1` and no hunks, so a model cannot tell whether two
+lines are a string format or a synchronous network call. Counts can implicate a
+commit; they cannot **exonerate** one.
 
-So the justified change is to the evidence, not the prompt, which is what
-`CLAUDE.md` prescribes. Full analysis in `DOCUMENTATION-EVALS.md` §14.
+Hunks were built and measured before being adopted, on packets captured from
+identical anomalies so the arms differed only in the diff. The A/B did not
+support the change — it cost one regression on one model, and the failure that
+motivated it did not reproduce. **Hunks are off by default**, the capability is
+kept, and the reasoning is in `DOCUMENTATION-EVALS.md` §14.
 
-Four cases, one application shape, three models. The decline half is two cases,
-and one of them fails everywhere — treat that axis as measured on a sample of
-two.
+The more consequential finding came out of the same exercise: **correlation
+cases are not stable across captures.** A case embeds the classifier's verdict,
+and when Tier 2 happens to name an external cause the correlator's job becomes
+much easier. Same scenario, same label, materially different difficulty — so
+scores are comparable within a capture generation, not across them.
+
+Four cases, one application shape. The decline half is two cases, and the set
+inherits the classifier's variance — treat every number here as describing one
+capture generation.
 
 ---
 
@@ -769,10 +776,11 @@ two.
 | Correlation eval and scorecard | ✅ Built — `pnpm eval --correlation` |
 | `correlations` table | ✅ Written by `correlate.ts` |
 
-Nothing remains in Phase 3. What remains is *more of it*: the decline half is
-two cases, which is the thinnest and most important part of the set, and the
-`latency-jump` failure is a real finding waiting on enough evidence to justify
-acting on it.
+Nothing remains in Phase 3 as code. What it needs is a better golden set: the
+decline half is two cases, and the set inherits the classifier's variance so a
+re-capture can silently change its difficulty. Pinning the classifier verdict
+per case, or capturing several draws per scenario, would fix that — and both the
+hunks question and the decline axis are waiting on it.
 
 ---
 

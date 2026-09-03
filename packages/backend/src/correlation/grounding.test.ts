@@ -29,6 +29,7 @@ const candidates: CandidateCommit[] = [
       { path: "src/lib/pricing.js", added: 7, deleted: 1 },
       { path: "src/routes/orders.js", added: 2, deleted: 1 },
     ],
+    diff: "",
   },
   {
     sha: DECOY,
@@ -37,6 +38,7 @@ const candidates: CandidateCommit[] = [
     subject: "refactor(pricing): extract formatPrice",
     body: "",
     files: [{ path: "src/lib/pricing.js", added: 7, deleted: 0 }],
+    diff: "",
   },
 ];
 

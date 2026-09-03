@@ -31,6 +31,7 @@ function commit(overrides: Partial<CandidateCommit> = {}): CandidateCommit {
     subject: "feat(pricing): show the promotional total on order responses",
     body: "Adds discounted_total to every order response.",
     files: [{ path: "src/lib/pricing.js", added: 7, deleted: 1 }],
+    diff: "",
     ...overrides,
   };
 }
@@ -173,6 +174,105 @@ describe("renderCorrelationContext", () => {
     for (const line of text.split("\n")) {
       if (line.includes("Second paragraph.")) expect(line.startsWith("      ")).toBe(true);
     }
+  });
+});
+
+describe("diffs in the packet", () => {
+  const DIFF = [
+    "diff --git a/src/lib/pricing.js b/src/lib/pricing.js",
+    "--- a/src/lib/pricing.js",
+    "+++ b/src/lib/pricing.js",
+    "@@ -4,4 +4,10 @@",
+    "+function formatDiscountedPrice(order) {",
+    "+  return formatPrice(order.discounted_cents);",
+    "+}",
+  ].join("\n");
+
+  const withDiff = (diff: string) =>
+    input({
+      commits: { commits: [commit({ diff })], since: WINDOW_START, until: WINDOW_END },
+    });
+
+  it("omits the diff by default", () => {
+    // Off in the shipped packet: a controlled A/B did not support turning it
+    // on. See DOCUMENTATION-EVALS.md §14.
+    const text = renderCorrelationContext(withDiff(DIFF));
+
+    expect(text).not.toContain("diff:");
+    expect(text).toContain("src/lib/pricing.js  +7/-1");
+  });
+
+  it("renders the diff when asked", () => {
+    const text = renderCorrelationContext(withDiff(DIFF), { diffs: true });
+
+    expect(text).toContain("diff:");
+    expect(text).toContain("+  return formatPrice(order.discounted_cents);");
+  });
+
+  it("changes nothing but the hunks between the two arms", () => {
+    // What makes the A/B controlled: both packets come from one incident, so
+    // the only difference is the diff itself.
+    const on = renderCorrelationContext(withDiff(DIFF), { diffs: true });
+    const off = renderCorrelationContext(withDiff(DIFF), { diffs: false });
+
+    expect(off).not.toContain("formatDiscountedPrice");
+    for (const line of off.split("\n")) {
+      expect(on).toContain(line);
+    }
+  });
+
+  it("indents the patch so its own markers cannot read as packet structure", () => {
+    // A patch contains --- and +++ at column zero; unindented they would look
+    // like sections of the evidence rather than part of a diff.
+    const text = renderCorrelationContext(withDiff(DIFF), { diffs: true });
+
+    for (const line of text.split("\n")) {
+      if (line.includes("+++ b/src/lib/pricing.js")) {
+        expect(line.startsWith("      ")).toBe(true);
+      }
+    }
+  });
+
+  it("truncates by line and says how many it cut", () => {
+    const long = Array.from({ length: 100 }, (_, i) => `+  line ${i}`).join("\n");
+    const text = renderCorrelationContext(withDiff(long), { diffs: true });
+
+    expect(text).toContain(`… ${100 - correlationBudget.maxDiffLinesPerCommit} more diff line(s)`);
+    expect(text).toContain("+  line 0");
+    expect(text).not.toContain("+  line 99");
+  });
+
+  it("renders nothing extra for a commit with no diff", () => {
+    const text = renderCorrelationContext(withDiff(""), { diffs: true });
+    expect(text).not.toContain("diff:");
+  });
+
+  it("spends the total budget newest-first and still shows every candidate", () => {
+    // A candidate the model never sees cannot be ruled out either, so commits
+    // past the budget lose their hunks — not their entry.
+    const long = Array.from({ length: 40 }, (_, i) => `+  line ${i}`).join("\n");
+    const many = Array.from({ length: 12 }, (_, i) =>
+      commit({ sha: String(i).padStart(40, "a"), subject: `commit number ${i}`, diff: long }),
+    );
+
+    const text = renderCorrelationContext(
+      input({ commits: { commits: many, since: WINDOW_START, until: WINDOW_END } }),
+      { diffs: true },
+    );
+
+    for (let i = 0; i < 12; i += 1) {
+      expect(text).toContain(`commit number ${i}`);
+    }
+
+    // The budget is spent down rather than divided, so the commit that
+    // straddles the limit gets a partial diff rather than none. What must hold
+    // is the cap itself.
+    const patchLines = text
+      .split("\n")
+      .filter((line) => line.trimStart().startsWith("+  line "));
+
+    expect(patchLines.length).toBeLessThanOrEqual(correlationBudget.maxDiffLinesTotal);
+    expect(patchLines.length).toBeGreaterThan(correlationBudget.maxDiffLinesTotal - 40);
   });
 });
 

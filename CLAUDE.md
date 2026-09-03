@@ -39,10 +39,7 @@ harness.
 
 Phase 3 is **done and measured across three models**: attribution 2/2
 everywhere, declining 1/2 on both Gemini variants and 0/2 on `llama3.2`, against
-a "blame the newest commit" baseline of 0/2 and 0/2. `latency-jump` fails on
-every model, and they blame different commits — so the fix belongs in the
-evidence (the packet carries no diff content, so an innocent commit cannot be
-exonerated), not in the prompt. `DOCUMENTATION-EVALS.md` §14.
+a "blame the newest commit" baseline of 0/2 and 0/2. `DOCUMENTATION-EVALS.md` §14.
 
 Phases 4 (root-cause agent) and 5 (dashboard) are not built.
 
@@ -53,7 +50,7 @@ on the benign half. See `DOCUMENTATION-EVALS.md` §10.
 ## Commands
 
 ```bash
-pnpm typecheck && pnpm test        # 150 tests, ~300ms, no network
+pnpm typecheck && pnpm test        # 157 tests, ~300ms, no network
 pnpm backend                       # ingestion API on :4000
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -95,6 +92,17 @@ commit" for Phase 3. Both are deliberately the thing the tier must beat.
 column, and limitations are listed rather than omitted.
 
 ## Gotchas that will cost you time
+
+**Correlation cases inherit the classifier's variance, so re-capturing can
+silently change how hard the set is.** A case embeds Tier 2's summary; when it
+names an external cause, declining becomes nearly free. `latency-jump` failed on
+three models in one capture and passed on two in the next with no packet change.
+Correlation scores are comparable within a capture generation, not across them.
+
+**Hunks in the correlation packet are built but OFF.** `{ diffs: true }`, or
+`--diff` on capture. A controlled A/B did not support turning them on: one
+regression, no reproducible benefit, 3.7× packet growth. Do not switch the
+default without a bigger and more stable golden set. `DOCUMENTATION-EVALS.md` §14.
 
 **Golden cases are captured artefacts.** They store the rendered prompt as a
 fixed string, so ANY change to the evidence packet invalidates all six. Rebuild

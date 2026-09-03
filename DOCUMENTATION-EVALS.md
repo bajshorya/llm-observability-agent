@@ -1218,7 +1218,7 @@ cross-model run shows why the instinct is wrong anyway: three models with very
 different capabilities all fail identically, which points at the evidence rather
 than the instructions.
 
-Look at what the packet actually offers about the pricing commit:
+Look at what the packet offers about the pricing commit:
 
 ```
   src/lib/pricing.js    +7/-1
@@ -1227,36 +1227,115 @@ Look at what the packet actually offers about the pricing commit:
 
 Two lines added to a route handler that serves the endpoints that got slow. The
 model cannot tell whether those two lines are a string format or a synchronous
-network round-trip, because **the packet carries no diff content** — a
-deliberate token trade, recorded in `DOCUMENTATION-PHASE-3.md` §14 as "a bug
-visible only in the diff is invisible to the agent".
+network round-trip, because the packet carries no diff content. Counts can
+implicate a commit; they cannot **exonerate** one.
 
-This is the same limitation biting from the other side. Without the diff, an
-innocent commit that touches the affected path cannot be *exonerated*. The
-models are not being careless; they are reasoning correctly from evidence that
-does not contain the fact that would settle it.
+So the hypothesis was: add hunks. It is the change `CLAUDE.md` prescribes — fix
+evidence, not the prompt — and it can be justified without reference to any
+score.
 
-So the justified next change is to the evidence, not the prompt — which is
-exactly what `CLAUDE.md` prescribes: *fix evidence and test data instead, and be
-able to justify each change without reference to the score it produced.* The
-justification here stands on its own: a correlator asked to rule commits out
-needs to see what they changed, not only how much.
+### The A/B, and why it says not to
 
-It remains a hypothesis until measured. Adding hunks roughly triples the packet,
-and a bigger packet can make things worse — §9 records an addition to the
-classifier packet that made one case worse before a second fixed it.
+Hunks were built, and measured before being adopted. `renderCorrelationContext`
+takes a `diffs` option, and `CAPTURE_CONTROL=1` stores both packet shapes **from
+the same anomaly** — identical traffic, identical classifier summary, identical
+candidates, differing only in the hunks. Capturing the arms from separate runs
+would have confounded them with everything else that varies between runs, which
+turned out to matter enormously.
+
+```
+                          no hunks (shipped)   with hunks
+  gemini-3.5-flash             4/4                3/4
+  gemini-2.5-flash             2/2 *              4/4
+```
+\* two cases hit the daily quota and are reported as failures, not wrong answers.
+
+Three things came out of it, and the third is the important one.
+
+**The diff cost one regression.** On `gemini-3.5-flash`, `limiter-misconfig` went
+from correct to a decline. Its reasoning, having read the limiter's code: *"the
+rate limiting behavior is working exactly as designed and configured … indicating
+a genuine traffic surge or client-side behavior change rather than a bug."*
+
+That is a defensible argument, and the diff is what enabled it: the limiter's
+code **is** correct. The defect is in the constants it shipped with, not in the
+logic, and a diff that shows correct logic argues for innocence. It did not
+replicate on `gemini-2.5-flash`.
+
+**It exposed a second evidence gap while we were looking at the first.** The
+model reached for "a genuine traffic surge", and the packet cannot rule that out
+— it carries the classifier's *summary* but none of its *numbers*, so request
+volume is simply absent. Whether to add it is the same class of question, and it
+is not being answered on this evidence either.
+
+**The failure that motivated the whole change did not reproduce** — in either
+arm, on either model. That is not the diff working. It is the next section.
+
+### The cases are not stable across captures, and that is a real defect
+
+`latency-jump` failed on three models in one capture and passes on two models in
+the next, with the shipped packet unchanged between them. The difference is
+upstream:
+
+```
+August capture    area: /orders endpoints
+                  "latency degradation across multiple endpoints, particularly
+                   affecting the refund and order creation paths"
+
+September capture area: payments-service dependency
+                  "a significant latency spike driven by upstream timeouts when
+                   contacting payments-service"
+```
+
+A correlation packet embeds the **classifier's verdict**, and the classifier is
+itself a model answering freshly generated traffic. When it names an external
+cause, declining is nearly free; when it points at the order endpoints, the
+correlator is invited to blame a commit that touches them. Same scenario, same
+label, materially different difficulty.
+
+The classifier set does not have this property — its cases embed only detector
+output and log text, which are generated but not *reasoned*. Correlation is the
+first stage whose golden cases inherit another model's judgement, and inheriting
+it means inheriting its variance.
+
+Consequences, stated plainly:
+
+- **Scores are comparable within a capture generation, not across them.**
+  The 1/2 declining recorded earlier and the 2/2 here are not the same
+  measurement, and re-capturing can silently swap a hard case for an easy one.
+- Four cases makes this worse: one case changing difficulty moves the headline
+  by 25 points.
+- A fix would mean pinning the classifier verdict per case rather than
+  re-deriving it, or capturing several draws per scenario. Neither is done.
+
+### What was actually changed, and what was not
+
+**The prompt was not touched.** It has been byte-for-byte unchanged since before
+the first correlation run, exactly like the classifier's.
+
+**Hunks are off by default.** The capability is built, tested and reachable
+(`{ diffs: true }`, `--diff` on capture), and the shipped packet does not use it.
+The change is unmotivated by current evidence, showed one regression, and grows
+the packet 3.7× — a real cost on a quota-bound free tier. Shipping it would have
+meant adopting on the strength of an argument after the measurement declined to
+support it.
+
+The a priori argument for hunks is unchanged and still good. It is waiting on a
+golden set large and stable enough to answer the question, which is the same
+thing the decline axis is waiting on.
 
 ### What this does not establish
 
-Four cases and one application shape. Three models now, which is enough to say
-the `latency-jump` failure is not model-specific — but not enough to rank the
-two Gemini variants, which score identically on everything except the exact
-commit they wrongly name.
+Four cases and one application shape. The decline half is **2 cases** — the
+thinnest part of the set and the half that matters most, exactly as the benign
+half does for Tier 2.
 
-The decline half is **2 cases**. It is the thinnest part of the set and the half
-that matters most, exactly as the benign half does for Tier 2, and one of those
-two cases fails on every model tested. Treat "declined when it should" as
-measured on a sample of two until that is widened.
+And, as of the A/B above, the set is known to be **unstable across captures**.
+Any number in this section describes one capture generation. The honest summary
+of Phase 3 is: it clearly beats its baseline, which scores zero on both accuracy
+axes and has never scored anything else; beyond that, four inherited-variance
+cases cannot rank models or settle packet-design questions, and one attempt to
+settle such a question is written up above as having failed to settle it.
 
 Reasoning quality is still not measured. `reasoning` is printed for wrong
 answers, because the answer is as often a bad label as a bad model — two of the

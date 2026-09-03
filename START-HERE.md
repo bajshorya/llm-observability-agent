@@ -66,7 +66,7 @@ why the default provider is an offline stub.
 In every module, the logic that decides things has no database, clock, or I/O —
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `grounding.ts`. The
 code that touches the database is separate — `engine.ts`, `rollup.ts`,
-`classify.ts`, `calls.ts`. That split is why 150 tests run in 300ms with no
+`classify.ts`, `calls.ts`. That split is why 157 tests run in 300ms with no
 fixtures — including a `git log` parser tested entirely on strings, with no
 repository anywhere near it. **When you are hunting for logic, it is in a pure file.**
 
@@ -306,13 +306,15 @@ guilty commits, so nothing is pattern-matching one answer. Declining is 1/2 on
 both Gemini variants and 0/2 on a 3B local model. The "blame the newest commit"
 baseline scores 0/2 and 0/2.
 
-The miss is the part worth reading, and it is the same case on every model. Two
-things came out of refusing to patch the prompt for it. Running the cases
-against more models showed all three fail identically — so it is not a model
-quirk. And looking at what the packet actually offers about the innocent commit
-(`src/routes/orders.js +2/-1`, no diff) showed why: without hunks, a commit that
-touches the affected path cannot be **exonerated**. The fix belongs in the
-evidence, which is what the project's own rule says. `EVALS` §14.
+Those numbers describe **one capture generation**, and that caveat is the most
+useful thing Phase 3 produced. A correlation case embeds the classifier's
+verdict, so re-capturing can silently change how hard the set is: one case
+failed on three models in August and passed on two in September with no change
+to the packet. Correlation is the first stage whose golden cases inherit another
+model's judgement, and inheriting it means inheriting its variance.
 
-By idea 6 above, declining is the half that matters — and it is measured on a
-sample of two.
+The attempt to fix that case — adding diff hunks so an innocent commit can be
+ruled out — was built, measured with and without on identical anomalies, and
+**not adopted**: one regression, no reproducible benefit, 3.7× packet growth.
+The capability is kept and switched off. `EVALS` §14 tells both stories, and the
+second one is why the first is unresolved.

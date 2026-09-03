@@ -31,6 +31,10 @@
 #   bash scripts/capture-correlation-cases.sh              # uses LLM_PROVIDER
 #   bash scripts/capture-correlation-cases.sh gemini       # or name one
 #
+#   CAPTURE_CONTROL=1 bash scripts/capture-correlation-cases.sh gemini
+#     also stores a with-hunks arm per scenario as diff-<scenario>, captured
+#     from the SAME anomaly, so the two differ only in the hunks.
+#
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,6 +43,10 @@ PORT=4300
 BASELINE_MINUTES=120
 INJECT_MINUTES=5
 PROVIDER="${1:-}"
+# Set to 1 to also capture a WITH-HUNKS arm per scenario, named diff-<scenario>,
+# for measuring what the hunks are worth. Hunks are off in the shipped packet;
+# see DOCUMENTATION-EVALS.md §14 for the A/B that decided that.
+CAPTURE_CONTROL="${CAPTURE_CONTROL:-0}"
 
 cd "$REPO" || exit 1
 mkdir -p "$WORK"
@@ -113,6 +121,22 @@ run_case() {
   [ -n "$files" ] && args+=(--files "$files")
 
   pnpm eval "${args[@]}" 2>&1 | grep -E "Captured|expect|matches none"
+
+  # The control arm, from the SAME anomaly: identical traffic, identical
+  # classifier summary, identical candidate commits — only the hunks differ.
+  # Capturing it from a separate run would confound the diff with everything
+  # else that differed between two runs.
+  if [ "$CAPTURE_CONTROL" = "1" ]; then
+    # Built fresh rather than substituted into the array above: `--capture` and
+    # its value are separate elements, so a pattern spanning both never matches
+    # and the control would silently overwrite the case it is meant to control.
+    local control=(--correlation --capture "diff-$scenario" --scenario "$scenario" \
+                   --sha "$sha" --note "$note" --diff)
+    [ -n "$files" ] && control+=(--files "$files")
+
+    pnpm eval "${control[@]}" 2>&1 | grep -E "Captured|matches none"
+  fi
+
   unset DATABASE_URL
 }
 

@@ -57,6 +57,12 @@
  *   - `GIT_LOG_ARGS`     the full argument list, so the two cannot drift.
  *   - `parseGitLog`      stdout -> CandidateCommit[], newest first
  *
+ * THE TAIL CHUNK HOLDS TWO THINGS
+ * With `-p`, the chunk after a header carries the numstat block and then the
+ * unified diff. The boundary is the first `diff --git` at column zero, which a
+ * patch cannot fake: every line inside a hunk is prefixed with `+`, `-` or a
+ * space, so that text can only start a line as a real file header.
+ *
  * ON FAILURE
  * A record that does not have the expected field count throws. It does not
  * skip the record and carry on: a parser that silently drops commits produces
@@ -96,8 +102,20 @@ export const GIT_LOG_ARGS = [
   "--numstat",
   "--no-renames",
   "--no-merges",
+  /**
+   * The unified diff. Added because line counts alone cannot exonerate a
+   * commit — see the note on `diff` in `shared/src/schemas/commit.ts`.
+   *
+   * It lands in the same chunk as the numstat block, after it, which is
+   * unambiguous: a real file header is `diff --git` at column zero, and any
+   * such text inside a patch is prefixed with `+`, `-` or a space.
+   */
+  "-p",
   `--format=${GIT_LOG_FORMAT}`,
 ] as const;
+
+/** A real patch header. Column zero is what makes this unambiguous. */
+const DIFF_HEADER = /^diff --git /m;
 
 /**
  * `git log --numstat` prints a line count, or `-` for a binary file.
@@ -113,7 +131,26 @@ function parseCount(raw: string): number | null {
 }
 
 /**
- * The chunk after a header: zero or more `added\tdeleted\tpath` lines.
+ * Split the chunk after a header into its numstat block and its patch.
+ *
+ * `git log --numstat -p` prints the counts first and the diff second, so the
+ * first `diff --git` at column zero is the boundary. Patch content cannot
+ * produce a false boundary: every line inside a hunk carries a `+`, `-` or
+ * space prefix, so `diff --git` can only appear at column zero as a real
+ * header.
+ */
+function splitTail(chunk: string): { numstat: string; diff: string } {
+  const match = DIFF_HEADER.exec(chunk);
+  if (!match) return { numstat: chunk, diff: "" };
+
+  return {
+    numstat: chunk.slice(0, match.index),
+    diff: chunk.slice(match.index).trimEnd(),
+  };
+}
+
+/**
+ * The numstat block: zero or more `added\tdeleted\tpath` lines.
  *
  * Zero is normal, not an error — an empty commit, or `--no-renames` on a pure
  * rename, both produce a header with nothing after it.
@@ -197,6 +234,8 @@ export function parseGitLog(stdout: string): CandidateCommit[] {
       throw new Error(`git log: unparseable date ${JSON.stringify(isoDate)} on ${sha}`);
     }
 
+    const { numstat, diff } = splitTail(chunks[i + 1] ?? "");
+
     commits.push(
       candidateCommitSchema.parse({
         sha,
@@ -205,7 +244,9 @@ export function parseGitLog(stdout: string): CandidateCommit[] {
         subject,
         // `%b` ends with a trailing newline whenever a body exists.
         body: body.trim(),
-        files: parseNumstat(chunks[i + 1] ?? ""),
+        files: parseNumstat(numstat),
+        // Verbatim and unbudgeted; `context.ts` decides how much is shown.
+        diff,
       }),
     );
   }
