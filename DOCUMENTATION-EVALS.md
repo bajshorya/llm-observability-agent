@@ -1640,6 +1640,86 @@ over.** Two cases have been re-scored on the new capture and both are correct;
 the rest is a quota away. That is the cost of the fix, and it is the last time
 it should be necessary for this reason.
 
+### Re-scored on the deterministic capture, and the hunks A/B re-run
+
+Everything below is one capture generation, and — for the first time — a
+generation that can be reproduced exactly. Same model, same day, both arms
+captured from identical anomalies.
+
+**The re-score.** `gemini-2.5-flash` on the deterministic capture:
+
+```
+  named the right commit    2/2   100%
+  declined when it should   2/4    50%
+  right files within it     2/2   100%
+  confidence when right     0.90   when wrong 0.72
+```
+
+Worse than the 6/6 recorded on the pre-determinism capture, which is expected
+and is the last time it should happen for this reason: the determinism fix
+changed the packet once more, and it is frozen now.
+
+The two failures are both attributions to a commit on an invented mechanism.
+`latency-jump` blamed the pricing commit because adding a discounted total
+"likely requires an additional call to the pricing or payments service".
+`traffic-surge` blamed the token bucket because rate limiting "directly relates
+to managing request volume". Neither claim is in the packet; both are themes
+matched to a subject line.
+
+**And that is exactly what hunks were supposed to fix.** Re-running the A/B on
+this capture, same model, same day:
+
+```
+                          no hunks   with hunks
+  named the right commit     2/2        2/2
+  declined when it should    2/4        4/4
+```
+
+Both decline failures gone. Seeing `pricing.js` is a division and a `toFixed`,
+and that the token bucket is an in-memory counter that rejects without doing
+work, is enough to rule both commits out — which is the argument for hunks
+stated at the top of this section, now supported rather than asserted.
+
+**This reverses the earlier A/B**, which found one regression and no benefit.
+That earlier run was against a capture that could not be reproduced, on a set
+where one case was mislabelled, and its own conclusion said the result could
+not resolve anything smaller than an unmeasured noise floor. It was right to
+refuse the change on that evidence and right to re-run it on better.
+
+### Hunks are a trade, not a win
+
+The same A/B on `llama3.2` (3B, local) goes the other way:
+
+```
+                          no hunks   with hunks
+  named the right commit     2/2        0/2
+  declined when it should    0/4        0/4
+```
+
+With hunks it stops naming the pricing and limiter commits and names
+`8a38dbc5a4` — the CI-configuration change, and the newest commit in the window
+— on four of six. The packet grows 3.7x and the smaller model falls back to the
+crudest available heuristic, which is the one the fixture history exists to
+defeat.
+
+So hunks help a capable model decline correctly and degrade a weak one. That is
+a switch, not a default:
+
+```bash
+CORRELATION_DIFFS=1 pnpm correlate      # for a capable model
+pnpm eval --correlation --diff          # score the with-hunks arm
+```
+
+The two arms are stored side by side and **never blended into one scorecard** —
+a number averaged across two packet formats describes neither. `--diff` selects
+the arm on both capture and run.
+
+**What is still missing** is `gemini-3.5-flash` on this capture, in both arms;
+its daily quota was spent on the repeatability measurement. It is the model that
+regressed in the earlier A/B, so it is the one whose result would decide whether
+the default should change. Until then the default stays off, and the switch
+exists for anyone who has measured their own model.
+
 ### What this does not establish
 
 Four cases and one application shape. The decline half is **2 cases** — the

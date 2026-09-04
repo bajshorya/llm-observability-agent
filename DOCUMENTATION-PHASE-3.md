@@ -725,14 +725,19 @@ declines that are four different reasons to answer null** — an upstream
 dependency, that dependency degrading, a load change, and a real code bug whose
 cause is older than the lookback.
 
+On the deterministic capture, with and without hunks in the packet:
+
 ```
-                          gemini-2.5-flash   llama3.2 (3B)   stub
-  named the right commit       2/2               1/2 *        0/2
-  declined when it should      4/4               0/4          0/4
-  right files within it        2/2               1/1          0/0
-  confidence                  0.90            0.80 on all six  0.25
+                          gemini-2.5-flash      llama3.2 (3B)       stub
+                          plain    hunks        plain    hunks
+  named the right commit   2/2      2/2          2/2      0/2        0/2
+  declined when it should  2/4      4/4          0/4      0/4        0/4
 ```
-\* correct by accident — it names the same commit on every case.
+
+Hunks fix both of the capable model's decline failures and destroy the weak
+model's attribution — the packet grows 3.7× and it falls back to naming the
+newest commit. So `CORRELATION_DIFFS` is a switch, default off. §14 of the
+evals document has the reasoning and what is still missing.
 
 The baseline scores zero on both accuracy axes — the fixture history is built so
 "blame the newest commit" is never right, and it names a commit on both decline
@@ -792,11 +797,14 @@ baseline supports.
 | Correlation eval and scorecard | ✅ Built — `pnpm eval --correlation` |
 | `correlations` table | ✅ Written by `correlate.ts` |
 
-Nothing remains in Phase 3 as code, and the harness is now reproducible end to
-end. What that unblocks, in order: **re-score the set** (it was re-captured to
-get here, so no earlier number carries over — two cases are re-scored and
-correct), then **re-run the hunks A/B** against a later capture, which was
-impossible before, then **compare models** without re-capture being a confound.
+Nothing remains in Phase 3 as code. The set is re-scored on the deterministic
+capture, the hunks A/B has been re-run properly and reversed its earlier result,
+and two models have been compared on identical evidence.
+
+What is left is one measurement: **`gemini-3.5-flash` on this capture, both
+arms**. It is the model that regressed in the earlier A/B, so it is the one
+whose result decides whether `CORRELATION_DIFFS` should default on. Its daily
+quota went on the repeatability run.
 
 ---
 

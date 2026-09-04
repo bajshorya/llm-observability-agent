@@ -63,6 +63,7 @@ pnpm correlate                     # Phase 3 — which commit, or none
 pnpm correlate --preview           # the exact prompt, calls nothing
 pnpm eval --provider gemini        # score the classifier golden set
 pnpm eval --correlation            # score the correlation set (6 cases)
+pnpm eval --correlation --diff     # score the with-hunks arm instead
 LLM_MODEL=llama3.2 pnpm eval --correlation --provider ollama   # free, local, no quota
 LLM_TEMPERATURE=0 pnpm eval --correlation          # for repeatability runs
 
@@ -105,10 +106,18 @@ verdict now lives in `src/eval/verdicts/<scenario>.json` and capture reads it,
 which is also why capture makes no model calls. Re-pin deliberately, from a real
 run, and expect scores to move when you do.
 
-**Hunks in the correlation packet are built but OFF.** `{ diffs: true }`, or
-`--diff` on capture. A controlled A/B did not support turning them on: one
-regression, no reproducible benefit, 3.7× packet growth. Do not switch the
-default without a bigger and more stable golden set. `DOCUMENTATION-EVALS.md` §14.
+**Hunks in the correlation packet are a switch, not a default.**
+`CORRELATION_DIFFS=1`, and `--diff` selects the arm for capture or scoring.
+Measured on the deterministic capture: on `gemini-2.5-flash` hunks take
+declining from 2/4 to 4/4; on a 3B local model they take attribution from 2/2 to
+0/2, because the packet grows 3.7× and it falls back to naming the newest
+commit. Helpful for a capable model, harmful for a weak one. The default stays
+off until `gemini-3.5-flash` is measured on this capture — it is the model that
+regressed in the earlier A/B. `DOCUMENTATION-EVALS.md` §14.
+
+**The two arms are never blended.** `loadCorrelationCases` excludes `diff-`
+prefixed cases unless the diff arm is asked for; a score averaged across two
+packet formats describes neither.
 
 **A decline case is only as good as the absence of a plausible culprit, and
 "plausible" is judged from the packet, not the source tree.** `orphan-refund-bug`

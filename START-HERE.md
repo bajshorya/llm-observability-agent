@@ -41,7 +41,7 @@ propose a fix.
                                             ▼
         TIER 3  commit correlation                 in progress
         which commit did this, or none?
-        2/2 attribution · 4/4 declining · baseline 0/2 and 0/4
+        2/2 attribution · 2/4 declining (4/4 with hunks) · baseline 0/2, 0/4
 ```
 
 The funnel is the whole point. Tier 1 is free and can run every 30 seconds.
@@ -303,9 +303,13 @@ it. That sequence is the more interesting half of the story.
 
 **Phase 3 has its own number, and a more interesting story.** On six cases —
 two attributable to *different* commits, four declines for four different
-reasons — `gemini-2.5-flash` scores 2/2 and 4/4. A 3B local model scores 0/4 on
-declining because it names the same commit to every case. The "blame the newest
-commit" baseline scores 0/2 and 0/4.
+reasons — `gemini-2.5-flash` scores 2/2 attribution and 2/4 declining, rising to
+4/4 when unified diffs are added to the packet. The same change takes a 3B local
+model from 2/2 attribution to 0/2. The "blame the newest commit" baseline scores
+0/2 and 0/4.
+
+More evidence is not uniformly better: it helped the capable model rule commits
+out and gave the weak one more to drown in.
 
 The most useful thing Phase 3 produced was a defect in its own harness.
 Correlation is the first stage whose golden cases inherit another model's

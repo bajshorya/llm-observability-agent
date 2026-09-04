@@ -710,7 +710,12 @@ would score a hallucination as "the provider errored".
 
 **`cases/*.json`** — six captured cases, three incidents and three benign.
 
-**`correlation-cases/*.json`** — six captured cases: two attributable to
+**`correlation-cases/*.json`** — two arms, stored side by side and never
+blended: six default cases and six `diff-` prefixed ones carrying the same
+incidents with unified diffs. `loadCorrelationCases` returns one arm or the
+other, because a score averaged across two packet formats describes neither.
+
+The default arm is six captured cases: two attributable to
 *different* commits, four where the answer is `null` and six candidates are
 offered anyway. Two different commits is load-bearing — with one, "finds the
 guilty commit" and "has learned the answer" score identically. So is four
@@ -932,6 +937,7 @@ Environment (`.env`, all optional — defaults work):
 | `LLM_PROVIDER` | `stub` | `gemini \| nvidia \| openrouter \| ollama \| stub` |
 | `LLM_MODEL` | per provider | Overrides the default model |
 | `LLM_TEMPERATURE` | 0.1 | Sampling override, for measuring eval repeatability |
+| `CORRELATION_DIFFS` | `0` | Include unified diffs in the correlation packet. A measured trade — see §19 |
 
 The generator takes `--seed` (default 42) and `--end-at <iso>`. Together they
 make a run byte-for-byte reproducible, which is what makes a correlation
@@ -1072,10 +1078,13 @@ apart. `--end-at` pins them, and two independent captures now produce
 byte-identical packets — verified. After a re-capture, `git diff` should touch
 only `capturedAt`.
 
-**The packet cannot exonerate an innocent commit.** With no diff content,
-`src/routes/orders.js +2/-1` could be a string format or a synchronous network
-call. Hunks were built to fix this and measured; the A/B did not support
-adopting them, so they are off by default. `DOCUMENTATION-EVALS.md` §14.
+**Hunks fix that, for a capable model, and break a weak one.** Without diff
+content `src/routes/orders.js +2/-1` could be a string format or a synchronous
+network call, so an innocent commit cannot be ruled out. Measured on the
+deterministic capture: `gemini-2.5-flash` goes from 2/4 to 4/4 on declining;
+`llama3.2` goes from 2/2 to 0/2 on attribution, falling back to the newest
+commit as the packet grows 3.7×. So `CORRELATION_DIFFS` is a switch and the
+default is off, pending `gemini-3.5-flash` on this capture.
 
 **Correlation cases used to inherit the classifier's variance**, so a re-capture
 could silently swap a hard case for an easy one — one failed on three models in
