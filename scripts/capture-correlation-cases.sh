@@ -18,13 +18,15 @@
 #
 #    The pinned verdicts are real Tier 2 output, recorded rather than redrawn.
 #
-# 2. IT REBUILDS THE FIXTURE WITH --anchor now. The fixture's pinned anchor sits
-#    on the date the classifier cases were captured; traffic generated today
-#    would leave it outside the 48-hour lookback and every packet would say "no
-#    candidates". Anchoring to now gives different shas each run — which is
-#    harmless here, because a correlation case stores its prompt AND its
-#    expected sha together and is therefore self-contained. It does mean the
-#    fixture is left anchored to now; rebuild with no flag to restore.
+# 2. IT IS REPRODUCIBLE. The generator's PRNG has always been seeded, but its
+#    TIMESTAMPS were wall-clock, so two runs landed on different minute
+#    boundaries and produced slightly different aggregates - enough to move a
+#    p95 by a couple of percent, and enough for a correlation decision to flip.
+#
+#    So traffic is generated with --end-at, pinned to two minutes after the
+#    fixture's own pinned anchor. Fixture and traffic then sit at the same fixed
+#    instant, the same six candidates are offered every run, and a capture
+#    reproduces its predecessor byte for byte.
 #
 # 3. THE LABELS INCLUDE A SHA, AND IT IS CHECKED. `--sha` is resolved against
 #    the candidates in the packet being captured, and capture fails if it
@@ -44,6 +46,10 @@ WORK="$REPO/.tmp/capture-correlation"
 PORT=4300
 BASELINE_MINUTES=120
 INJECT_MINUTES=5
+# The instant all generated traffic ends at. Two minutes after the fixture's
+# pinned anchor, so the buggy deploy lands just before the anomaly window and
+# the 48-hour lookback offers the same six candidates every time.
+END_AT="2026-08-16T19:02:00Z"
 # Set to 1 to also capture a WITH-HUNKS arm per scenario, named diff-<scenario>,
 # for measuring what the hunks are worth. Hunks are off in the shipped packet;
 # see DOCUMENTATION-EVALS.md §14 for the A/B that decided that.
@@ -67,9 +73,11 @@ stop_backend() {
   sleep 1
 }
 
-# --- the fixture has to overlap traffic generated now ------------------------
-echo "Rebuilding the fixture anchored to now..."
-bash "$REPO/scripts/build-fixture-repo.sh" --anchor now >/dev/null 2>&1
+# --- fixture and traffic are anchored to the SAME fixed instant --------------
+# Both use the pinned anchor rather than "now", which is what makes a capture
+# reproduce its predecessor: same shas, same window, same aggregates.
+echo "Building the fixture at its pinned anchor..."
+bash "$REPO/scripts/build-fixture-repo.sh" >/dev/null 2>&1
 
 # --- one baseline, reused by every scenario ----------------------------------
 if [ ! -f "$WORK/base.db" ]; then
@@ -77,7 +85,7 @@ if [ ! -f "$WORK/base.db" ]; then
   sqlite3 "$REPO/data/dev.db" .schema | sqlite3 "$WORK/base.db"
   start_backend "$WORK/base.db"
   INGEST_URL="http://localhost:$PORT/ingest" \
-    pnpm generate backfill --minutes $BASELINE_MINUTES 2>&1 | tail -1
+    pnpm generate backfill --minutes $BASELINE_MINUTES --end-at "$END_AT" 2>&1 | tail -1
   stop_backend
   sqlite3 "$WORK/base.db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
 fi
@@ -93,7 +101,8 @@ run_case() {
 
   start_backend "$db"
   INGEST_URL="http://localhost:$PORT/ingest" \
-    pnpm generate inject --scenario "$scenario" --minutes $INJECT_MINUTES 2>&1 | tail -1
+    pnpm generate inject --scenario "$scenario" --minutes $INJECT_MINUTES \
+      --end-at "$END_AT" 2>&1 | tail -1
   stop_backend
 
   export DATABASE_URL="file:$db"
@@ -170,5 +179,6 @@ echo ""
 echo "=== captured"
 ls -1 "$REPO/packages/backend/src/eval/correlation-cases/"
 echo ""
-echo "The fixture is left anchored to now. Restore the pinned shas with:"
-echo "  bash scripts/build-fixture-repo.sh"
+echo "Fixture and traffic are both pinned. Re-running this script should change"
+echo "ONLY the capturedAt timestamps — git diff is the check, and anything else"
+echo "in that diff is a real change to the evidence, not capture noise."
