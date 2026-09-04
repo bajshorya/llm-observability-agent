@@ -19,6 +19,7 @@
  *   GEMINI/NVIDIA/OPENROUTER key credentials, all optional
  *   OLLAMA_BASE_URL              local provider, no key needed
  *   TARGET_REPO_PATH             the repository Phase 3 correlates against
+ *   CORRELATION_DIFFS            include hunks in the correlation packet
  *
  * TWO DETAILS THAT MATTER MORE THAN THEY LOOK
  *
@@ -106,6 +107,21 @@ const envSchema = z.object({
    * Point this at a real checkout to correlate against real history.
    */
   TARGET_REPO_PATH: z.string().default("./fixtures/orders-api"),
+
+  /**
+   * Include unified diffs in the correlation packet. Off by default.
+   *
+   * Measured, not guessed, and the result is a trade rather than a win. On
+   * `gemini-2.5-flash` hunks took declining from 2/4 to 4/4; on a 3B local
+   * model they took attribution from 2/2 to 0/2, because the packet grows 3.7x
+   * and the smaller model falls back to naming the newest commit. Useful for a
+   * capable model, harmful for a weak one, so it is a switch rather than a
+   * default. `DOCUMENTATION-EVALS.md` §14.
+   */
+  CORRELATION_DIFFS: z
+    .enum(["0", "1", "true", "false"])
+    .default("0")
+    .transform((v) => v === "1" || v === "true"),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -1,7 +1,7 @@
 {
   "name": "error-spike",
   "scenario": "error-spike",
-  "capturedAt": "2026-09-04T16:06:32.571Z",
+  "capturedAt": "2026-09-04T17:49:16.034Z",
   "expect": {
     "suspectedCommitSha": null,
     "implicatedFiles": [],
