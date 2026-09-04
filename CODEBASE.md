@@ -1105,7 +1105,7 @@ and an add.
 
 | Phase | Scope | State |
 |---|---|---|
-| 3 | Commit correlation | ✅ **Done and measured** on a six-case set — 2/2 attribution and 4/4 declining on `gemini-2.5-flash`, against a 0/2 and 0/4 baseline. Single runs are samples; see §19 |
+| 3 | Commit correlation | ✅ **Done and measured** on a six-case set — 2/2 attribution and 4/4 declining on `gemini-2.5-flash`, against a 0/2 and 0/4 baseline. Re-scoring pending after the determinism re-capture; see §19 |
 | 4 | Root-cause + fix agent, human-gated | Schema and contract exist; no code |
 | 5 | Next.js dashboard with reasoning trace | Not started |
 

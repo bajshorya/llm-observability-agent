@@ -788,7 +788,7 @@ baseline supports.
 | `correlation/prompt.ts` — `CORRELATOR_SYSTEM_PROMPT` | ✅ Built |
 | `correlation/correlate.ts` — orchestration, persistence | ✅ Built |
 | `pnpm correlate` CLI | ✅ Built |
-| Golden cases for correlation | ✅ Built — 4 cases |
+| Golden cases for correlation | ✅ Built — 6 cases, 4 of them declines |
 | Correlation eval and scorecard | ✅ Built — `pnpm eval --correlation` |
 | `correlations` table | ✅ Written by `correlate.ts` |
 

@@ -62,7 +62,7 @@ pnpm classify --preview <id>       # the exact prompt, calls nothing
 pnpm correlate                     # Phase 3 — which commit, or none
 pnpm correlate --preview           # the exact prompt, calls nothing
 pnpm eval --provider gemini        # score the classifier golden set
-pnpm eval --correlation            # score the correlation set (4 cases)
+pnpm eval --correlation            # score the correlation set (6 cases)
 LLM_MODEL=llama3.2 pnpm eval --correlation --provider ollama   # free, local, no quota
 LLM_TEMPERATURE=0 pnpm eval --correlation          # for repeatability runs
 
