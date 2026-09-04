@@ -27,3 +27,7 @@ data/*.db-shm
 # Generated target repository for Phase 3 correlation — a real git repo with a
 # nested .git, rebuilt deterministically by scripts/build-fixture-repo.sh
 fixtures/orders-api/
+
+# Next.js build output
+.next/
+next-env.d.ts

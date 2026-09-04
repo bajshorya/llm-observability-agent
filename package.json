@@ -13,6 +13,7 @@
     "detect": "pnpm --filter @obs/backend detect",
     "classify": "pnpm --filter @obs/backend classify",
     "correlate": "pnpm --filter @obs/backend correlate",
+    "dashboard": "pnpm --filter @obs/dashboard dev",
     "eval": "pnpm --filter @obs/backend eval",
     "test": "pnpm -r test",
     "db:push": "pnpm --filter @obs/backend db:push",

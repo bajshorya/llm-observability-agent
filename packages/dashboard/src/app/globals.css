@@ -1,0 +1,153 @@
+/*
+ * One stylesheet, no framework.
+ *
+ * The workspace has deliberately few dependencies and no build step between
+ * packages; adding a CSS toolchain to render four screens of text would be the
+ * kind of weight this project has avoided everywhere else. Severity colour is
+ * the only thing here doing real work, and it is doing it in six lines.
+ */
+
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #262d38;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --link: #79c0ff;
+
+  /* Severity, and the one colour that is not a severity: dismissed. */
+  --critical: #f85149;
+  --high: #ff9d54;
+  --medium: #e3b341;
+  --low: #6e9c76;
+  --dismissed: #6e7681;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.wrap { max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }
+
+header.site { margin-bottom: 8px; }
+header.site h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+header.site p { margin: 0; color: var(--muted); font-size: 14px; }
+
+/* --- the funnel, which is the argument the design is made from -------------- */
+.funnel {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 28px 0 32px;
+}
+.funnel .step {
+  flex: 1 1 150px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.funnel .n { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
+.funnel .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.funnel .note { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+/* --- timeline --------------------------------------------------------------- */
+.row {
+  display: block;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--dismissed);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  color: inherit;
+}
+.row:hover { border-color: #3d4756; text-decoration: none; }
+.row.critical { border-left-color: var(--critical); }
+.row.high     { border-left-color: var(--high); }
+.row.medium   { border-left-color: var(--medium); }
+.row.low      { border-left-color: var(--low); }
+.row.unclassified { border-left-style: dashed; }
+
+.row .top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.row .service { font-weight: 600; }
+.row .when { color: var(--muted); font-size: 13px; margin-left: auto; }
+.row .summary { margin: 6px 0 0; color: var(--text); }
+.row .pending { margin: 6px 0 0; color: var(--muted); font-style: italic; }
+.row .triggers { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+.tag {
+  font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 4px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tag.sev { border-color: currentColor; }
+.tag.critical { color: var(--critical); }
+.tag.high     { color: var(--high); }
+.tag.medium   { color: var(--medium); }
+.tag.low      { color: var(--low); }
+.tag.dismissed { color: var(--dismissed); }
+
+/* --- detail ----------------------------------------------------------------- */
+.stage {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+.stage h2 { font-size: 15px; margin: 0 0 4px; letter-spacing: 0.01em; }
+.stage .tier { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 14px; }
+.stage h3 { font-size: 13px; color: var(--muted); margin: 16px 0 6px; font-weight: 600; }
+
+dl.facts { display: grid; grid-template-columns: 150px 1fr; gap: 6px 16px; margin: 0; }
+dl.facts dt { color: var(--muted); font-size: 13px; }
+dl.facts dd { margin: 0; }
+
+pre.packet {
+  background: #0b0f14;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  overflow-x: auto;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #c9d1d9;
+  margin: 0;
+  max-height: 460px;
+}
+
+code.mono { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+table.calls { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.calls th {
+  text-align: left; color: var(--muted); font-weight: 600; font-size: 12px;
+  padding: 4px 10px 8px 0; border-bottom: 1px solid var(--border);
+}
+table.calls td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--border); }
+table.calls tr:last-child td { border-bottom: none; }
+
+.empty {
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 28px 24px;
+  color: var(--muted);
+}
+.empty h2 { color: var(--text); font-size: 16px; margin: 0 0 8px; }
+.empty pre {
+  background: #0b0f14; border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px 14px; overflow-x: auto; color: #c9d1d9;
+  font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.back { display: inline-block; margin-bottom: 18px; font-size: 14px; }
