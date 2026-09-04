@@ -261,14 +261,16 @@ Six cases: two attributable to different commits, and four declines that are
 four *different* reasons to answer null.
 
 ```
-                          gemini-2.5-flash   llama3.2 (3B)   stub
-  named the right commit       2/2               1/2 *        0/2
-  declined when it should      4/4               0/4          0/4
-  right files within it        2/2               1/1          0/0
-  confidence                  0.90            0.80 on all six  0.25
+                          gemini-2.5-flash      llama3.2 (3B)       stub
+                          plain    hunks        plain    hunks
+  named the right commit   2/2      2/2          2/2      0/2        0/2
+  declined when it should  2/4      4/4          0/4      0/4        0/4
 ```
-\* correct by accident — it names the same commit on every case, which is
-exactly what the split scorecard exists to make visible.
+
+Including unified diffs in the packet (`CORRELATION_DIFFS=1`) fixes both of the
+capable model's decline failures and destroys the weak model's attribution — the
+packet grows 3.7× and it falls back to naming the newest commit. It is a
+measured trade, so it is a switch rather than a default.
 
 The two accuracy rows are never averaged: a model that always names something
 scores 100% and 0%, one that always declines scores the reverse, and blended
