@@ -132,6 +132,10 @@ packages/backend/src/
                         against the evidence · correlate.ts orchestrates
   eval/                 Golden set: cases/, grounding.ts, score.ts
 
+packages/dashboard/     Phase 5. Next.js, read-only. app/page.tsx is the
+                        timeline · app/anomaly/[id] is the reasoning trace ·
+                        lib/queries.ts is every read, in one file.
+
 scripts/                capture-cases.sh rebuilds the golden set ·
                         build-fixture-repo.sh builds the repo correlation reads
 ```
@@ -172,6 +176,7 @@ want the extended reasoning behind a particular decision.
 | Which commit caused it? | `PHASE-3` §1, §5 |
 | Where do the fixture commits come from? | `PHASE-3` §3 |
 | What does the correlator actually see? | `PHASE-3` §7–8 |
+| How do I see any of this without a terminal? | `pnpm dashboard`, then `PHASE-5` |
 | What stops a model inventing a commit? | `PHASE-3` §9 |
 | Why is `suspectedCommitSha` nullable? | `PHASE-3` §4 |
 | What is known to be broken? | `CODEBASE.md` §19 — consolidated |
@@ -183,7 +188,7 @@ want the extended reasoning behind a particular decision.
 
 ## The reading order
 
-Nine documents, about three hours if you read them all. You don't need
+Ten documents, about three hours if you read them all. You don't need
 to. **An hour in this order and you understand the system**; the rest
 becomes lookup.
 
@@ -204,6 +209,7 @@ question, not reading you owe.
 | The LLM layer in depth; adding a provider | `PHASE-2` §4–8 |
 | How evaluation works and what it found | `EVALS` — whole document |
 | Commit correlation and the fixture repository | `PHASE-3` — whole document |
+| The dashboard, and why it is read-only | `PHASE-5` — whole document |
 | Ingestion, schemas and the generator in detail | `DOCUMENTATION` §6–8 |
 
 ### Step 3, concretely
@@ -217,7 +223,11 @@ pnpm detect                                    # → ANOMALY, two triggers fired
 pnpm classify --preview <anomaly-id>           # ← the single most useful command
 pnpm classify                                  # a verdict, and status moves
 pnpm correlate --preview                       # the correlation packet
+pnpm dashboard                                 # ← then open localhost:3000
 ```
+
+Step 3 used to end in a terminal. It now ends on a page that shows the same
+evidence packet, the verdict, the commit and the cost, in pipeline order.
 
 That last command prints the exact evidence packet sent to the model. Fifteen
 minutes of this teaches more than an hour of reading, because you see the

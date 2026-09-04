@@ -35,7 +35,8 @@ the code win.
 [12. backend: llm](#12-backend--llm) ·
 [13. backend: classification](#13-backend--classification-tier-2) ·
 [14. backend: eval](#14-backend--eval) ·
-[14a. backend: correlation](#14a-backend--correlation-phase-3-partial)
+[14a. backend: correlation](#14a-backend--correlation-phase-3-partial) ·
+[14b. dashboard](#14b-packagesdashboard-phase-5)
 
 **Part IV — Reference**
 [15. Algorithms](#15-the-algorithms) ·
@@ -878,6 +879,51 @@ answer measures nothing. Detailed in `PHASE-3` §3.
 
 ---
 
+## 14b. `packages/dashboard` (Phase 5)
+
+A Next.js app, read-only, reading the same SQLite file the CLIs write. Two
+pages: a timeline and a per-anomaly reasoning trace.
+
+**`src/lib/queries.ts`** (~230 lines) — every read, in one file. Imports the
+backend's Drizzle schema and client rather than restating either: a dashboard
+with its own idea of what a column means will eventually disagree with the
+pipeline and be believed. No HTTP API in between, because the backend has one
+route and everything else is a CLI — a read API would be a second definition of
+"anomaly" for no gain while both run on the same machine.
+
+Every function is read-only, deliberately. `pnpm detect`, `classify` and
+`correlate` are separate commands because each spends something, and a button
+is one page refresh away from draining a day's free-tier quota.
+
+**`src/app/page.tsx`** — the timeline. Funnel across the top (raised →
+classified → real → correlated), then every anomaly newest first with severity
+in the left border. Dismissed rows are shown, not hidden: they are the evidence
+the expensive tier does something.
+
+**`src/app/anomaly/[id]/page.tsx`** — the reasoning trace, and the point of the
+phase. Five panels in pipeline order: the statistics with their own numbers, the
+model's verdict, **the evidence packet verbatim**, the correlation, and the cost
+including failed calls.
+
+The packet is rebuilt at request time by `renderContextForAnomaly` — the same
+pure function the pipeline calls — so the page cannot show a packet the model
+never saw. It is `pnpm classify --preview <id>` with a URL.
+
+**`src/lib/format.ts`** — presentation helpers, pure. `severityClass` treats
+`dismissed` as its own band rather than as `low`: a window Tier 2 ruled benign
+and one it ruled genuinely minor are different findings, and one colour for both
+erases the distinction the second tier exists to draw.
+
+**`next.config.mjs`** — `transpilePackages` keeps the workspace's
+no-build-step-between-packages rule; `serverExternalPackages` keeps
+`better-sqlite3` unbundled; `agentRules: false` stops Next writing its own
+`CLAUDE.md` into the package. `.mjs` rather than `.ts` because Next transpiles a
+TS config with the workspace's TypeScript, and TypeScript 7 does not expose the
+API it uses. Next must be 16.2.11+ for the same reason. See
+`DOCUMENTATION-PHASE-5.md` §8.
+
+---
+
 # Part IV — Reference
 
 ## 15. The algorithms
@@ -1116,7 +1162,7 @@ and an add.
 |---|---|---|
 | 3 | Commit correlation | ✅ **Done and measured** on a six-case set — 2/2 attribution and 4/4 declining on `gemini-2.5-flash`, against a 0/2 and 0/4 baseline. Re-scoring pending after the determinism re-capture; see §19 |
 | 4 | Root-cause + fix agent, human-gated | Schema and contract exist; no code |
-| 5 | Next.js dashboard with reasoning trace | Not started |
+| 5 | Next.js dashboard with reasoning trace | ✅ **Done** — timeline and per-anomaly reasoning trace, read-only |
 
 Phase 3's blocking decision is settled: correlation runs against a real git
 repository built by `scripts/build-fixture-repo.sh` and gitignored, rather than

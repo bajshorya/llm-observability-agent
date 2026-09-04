@@ -10,9 +10,9 @@ an LLM reads only the windows the statistics flagged and decides whether they
 actually matter. Later phases correlate real incidents with git commits and
 propose a fix.
 
-TypeScript, pnpm workspace, three packages: `shared` (Zod contracts),
+TypeScript, pnpm workspace, four packages: `shared` (Zod contracts),
 `generator` (synthetic traffic), `backend` (ingestion, detection, classification,
-evals).
+correlation, evals), `dashboard` (Next.js, read-only).
 
 ## Where to look
 
@@ -23,6 +23,7 @@ evals).
 | Why a threshold is what it is | `DOCUMENTATION-PHASE-1.md` |
 | The LLM layer in depth | `DOCUMENTATION-PHASE-2.md` |
 | Commit correlation, and the fixture repo | `DOCUMENTATION-PHASE-3.md` |
+| The dashboard and its reasoning trace | `DOCUMENTATION-PHASE-5.md` |
 | How evaluation works and what it found | `DOCUMENTATION-EVALS.md` |
 
 Every source file also opens with a detailed header explaining what it does and
@@ -44,7 +45,10 @@ declines for four different reasons). `gemini-2.5-flash` scores 2/2 and 4/4;
 three repeats with zero decision flips, and captures are now deterministic too,
 so results compare across runs. `DOCUMENTATION-EVALS.md` §14.
 
-Phases 4 (root-cause agent) and 5 (dashboard) are not built.
+Phase 5 (dashboard) is **done**: a Next.js app at `packages/dashboard` with a
+timeline and a per-anomaly reasoning trace. It reads the database directly and
+is entirely read-only. Phase 4 (root-cause agent) is not built — schema and Zod
+contract exist, no code.
 
 The two-tier claim is **measured, not asserted**: on `gemini-3.5-flash` the
 golden set scores 6/6 on every axis, stably; the statistical baseline scores 0/3
@@ -68,6 +72,8 @@ LLM_MODEL=llama3.2 pnpm eval --correlation --provider ollama   # free, local, no
 LLM_TEMPERATURE=0 pnpm eval --correlation          # for repeatability runs
 
 bash scripts/build-fixture-repo.sh # the repo Phase 3 correlates against
+
+pnpm dashboard                     # localhost:3000, reads DATABASE_URL
 ```
 
 ## Conventions that matter
@@ -83,6 +89,18 @@ own persistence. Keep it that way — it is why the tests need no fixtures.
 
 **Every boundary is validated with Zod.** Nothing downstream consumes
 unvalidated data, model output included.
+
+**The dashboard is read-only, and must stay that way.** No button classifies,
+correlates or re-runs anything. Each of those spends quota, and a button is one
+page refresh away from draining a day of it — the person who drains it will not
+be the one who knew clicking cost money.
+
+**Next must stay at 16.2.11+ and its config must stay `.mjs`.** Next 15
+transpiles a `.ts` config with the workspace's own TypeScript, and TypeScript 7
+(the native rewrite) does not expose the API it reaches for. The failure is a
+crash inside Next naming neither cause. `agentRules: false` also matters: Next
+otherwise writes its own `CLAUDE.md` into the package, and that is the file an
+agent would read first.
 
 **Tier 1 must never call a model.** `pnpm detect` is free and stays free.
 Classification and correlation are each their own command — every stage that
