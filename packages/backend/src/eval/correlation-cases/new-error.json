@@ -1,7 +1,7 @@
 {
   "name": "new-error",
   "scenario": "new-error",
-  "capturedAt": "2026-09-04T16:06:19.880Z",
+  "capturedAt": "2026-09-04T17:48:59.281Z",
   "expect": {
     "suspectedCommitSha": "0c701a0bcc1a3156a039260f598537731b16f51e",
     "implicatedFiles": [

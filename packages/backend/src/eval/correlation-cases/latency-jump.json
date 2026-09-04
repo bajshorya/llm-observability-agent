@@ -1,7 +1,7 @@
 {
   "name": "latency-jump",
   "scenario": "latency-jump",
-  "capturedAt": "2026-09-04T16:06:38.022Z",
+  "capturedAt": "2026-09-04T17:49:31.018Z",
   "expect": {
     "suspectedCommitSha": null,
     "implicatedFiles": [],

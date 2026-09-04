@@ -86,7 +86,14 @@ export const correlationCaseSchema = z.object({
 
 export type CorrelationCase = z.infer<typeof correlationCaseSchema>;
 
-export function loadCorrelationCases(filter?: string): CorrelationCase[] {
+/**
+ * Cases in the experimental with-hunks arm. Excluded from the default set
+ * because blending two packet formats into one scorecard would report a number
+ * that describes neither. See `DOCUMENTATION-EVALS.md` §14.
+ */
+const DIFF_ARM_PREFIX = "diff-";
+
+export function loadCorrelationCases(filter?: string, arm: "default" | "diff" = "default"): CorrelationCase[] {
   let files: string[];
   try {
     files = readdirSync(CORRELATION_CASES_DIR).filter((file) => file.endsWith(".json"));
@@ -112,8 +119,17 @@ export function loadCorrelationCases(filter?: string): CorrelationCase[] {
     return parsed.data;
   });
 
-  const filtered = filter ? cases.filter((c) => c.name === filter) : cases;
-  return filtered.sort((a, b) => a.name.localeCompare(b.name));
+  // A named case is returned whichever arm it belongs to, so `--case
+  // diff-latency-jump` still works without also passing an arm flag.
+  const inArm = filter
+    ? cases.filter((c) => c.name === filter)
+    : cases.filter((c) =>
+        arm === "diff"
+          ? c.name.startsWith(DIFF_ARM_PREFIX)
+          : !c.name.startsWith(DIFF_ARM_PREFIX),
+      );
+
+  return inArm.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function saveCorrelationCase(golden: CorrelationCase): string {

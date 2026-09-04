@@ -59,6 +59,7 @@ import {
   type LlmCallStats,
   type Severity,
 } from "@obs/shared";
+import { env } from "../env";
 import { db } from "../db/client";
 import { anomalies, correlations } from "../db/schema";
 import { recordLlmCall } from "../llm/calls";
@@ -253,7 +254,9 @@ export async function correlateAnomalies(
         provider,
         schema: correlationSchema,
         system: CORRELATOR_SYSTEM_PROMPT,
-        user: renderCorrelationContext(input),
+        // Off unless CORRELATION_DIFFS is set: hunks help a capable model
+        // decline correctly and degrade a weak one. See env.ts.
+        user: renderCorrelationContext(input, { diffs: env.CORRELATION_DIFFS }),
         agent: "correlator",
         anomalyId: incident.id,
         onCall: recordLlmCall,

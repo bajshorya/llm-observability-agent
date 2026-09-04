@@ -78,9 +78,9 @@ Correlation mode (--correlation) takes the same --provider, --case, --list and
   pnpm eval --correlation --capture new-error --sha 0c701a0 \\
             --files src/lib/pricing.js --note "the null-price bug"
 
-  --diff on capture stores the experimental packet WITH hunks, from the same
-  incident, for an A/B that isolates them from everything else. Hunks are off
-  by default; see DOCUMENTATION-EVALS.md §14.
+  --diff selects the experimental with-hunks arm: on capture it stores that
+  packet from the same incident, and on a run it scores that arm instead of the
+  default one. The two are never blended. See DOCUMENTATION-EVALS.md §14.
 
 
 Capturing a case:
@@ -328,8 +328,10 @@ function reportCorrelationSummary(summary: CorrelationSummary): void {
 async function runCorrelationMode(
   values: Record<string, string | boolean | undefined>,
 ): Promise<void> {
+  const arm = values["diff"] === true ? "diff" : "default";
+
   if (values["list"]) {
-    const cases = loadCorrelationCases();
+    const cases = loadCorrelationCases(undefined, arm);
     console.log(`${cases.length} correlation case(s):`);
     for (const golden of cases) {
       const want = golden.expect.suspectedCommitSha
@@ -341,12 +343,12 @@ async function runCorrelationMode(
   }
 
   if (typeof values["show"] === "string") {
-    const [golden] = loadCorrelationCases(values["show"]);
+    const [golden] = loadCorrelationCases(values["show"], arm);
     console.log(golden ? golden.context : `No correlation case named "${values["show"]}"`);
     return;
   }
 
-  const cases = loadCorrelationCases(values["case"] as string | undefined);
+  const cases = loadCorrelationCases(values["case"] as string | undefined, arm);
   if (cases.length === 0) {
     console.log(
       "The correlation golden set is empty. Capture one with:\n" +
