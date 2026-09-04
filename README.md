@@ -274,10 +274,11 @@ The two accuracy rows are never averaged: a model that always names something
 scores 100% and 0%, one that always declines scores the reverse, and blended
 both read as a respectable half.
 
-A single run is a sample. The same model scored 1/4 on declining against the
-previous capture; one of those failures was a case mislabelled by its author,
-and the other two flipped for reasons not yet established. Repeatability on
-identical packets is the next thing to measure.
+The harness is reproducible **within** a capture and not across one, and that
+distinction was measured rather than assumed: re-running the stored cases gives
+zero decision variance over 17 answers, while re-capturing the set has flipped
+two of four decline decisions. So compare scores within a capture; a re-capture
+creates a new benchmark, the way a changed prompt does.
 
 A correlation case embeds the classifier's verdict, and re-capturing used to
 change how hard the set was: one case failed on three models in one generation

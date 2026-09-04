@@ -1060,13 +1060,12 @@ why `pnpm classify` caps a run at 10 anomalies. Quota is bucketed per model, so
 provider in use is free and a cost column reading `0.00` would imply precision
 that isn't there.
 
-**A single correlation run is a sample, not a measurement.** `gemini-2.5-flash`
-scored 1/4 declining on one capture and 4/4 on the next. One of those failures
-was a mislabelled case, now fixed; the other two flipped between packets that
-are byte-identical in the candidate half and differ by ~2% on one trigger
-number. Model sampling at temperature 0.1 is the leading explanation and the
-direct test is quota-blocked, so the noise floor is still unknown — which also
-means the hunks A/B could not have resolved anything smaller than it.
+**Scores are reproducible within a capture and not across captures.** Measured:
+re-running stored cases gives zero decision variance over 17 answers (only
+confidence moves, ±0.05), while re-capturing the set has flipped two of four
+decline decisions. So a re-capture creates a new benchmark and should be treated
+like a changed prompt. What in a re-capture does the flipping is unknown,
+because the capture that produced the anomalous score was never committed.
 
 **The packet cannot exonerate an innocent commit.** With no diff content,
 `src/routes/orders.js +2/-1` could be a string format or a synchronous network
@@ -1113,11 +1112,11 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-Phase 3 is complete as code. Tier 2's verdict is pinned, the decline half is
-four, and capture variance is narrowed to ~2% on one number. What it needs next
-is the **repeatability measurement** — the same stored packets at
-`LLM_TEMPERATURE=0` and at 0.1, several times each. It is a command now rather
-than a code change, and every other open question here is downstream of it.
+Phase 3 is complete as code, and its harness is now characterised: reproducible
+within a capture, not across one. What it needs next is **capture determinism**
+— a seeded generator run and a fixed fixture anchor would make a re-capture
+reproduce its predecessor, which is the only thing that would let scores be
+compared across packet or prompt changes.
 
 One decision precedes the golden cases — whether `deploy-restart`'s fabricated
 deploy sha becomes a real one. It would make the strongest `null` test in the

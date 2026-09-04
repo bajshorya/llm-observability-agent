@@ -1506,6 +1506,73 @@ and compare. A benchmark arguably wants 0 outright, or N samples with a reported
 spread — but that is a change to evaluation method and should follow the
 measurement, not precede it.
 
+### The measurement, and the conclusion it overturned
+
+The repeatability test finished the next day. Same stored packets, no
+re-capture, so the model is the only variable.
+
+```
+  gemini-3.5-flash, temperature 0.1, three repeats of all six cases
+
+  case                repeat 1     repeat 2     repeat 3
+  error-spike         no commit    no commit    no commit
+  latency-jump        no commit    no commit    no commit
+  limiter-misconfig   9bfdbf91e4   9bfdbf91e4   9bfdbf91e4
+  new-error           d3e6eb99d4   d3e6eb99d4   d3e6eb99d4
+  orphan-refund-bug   no commit    no commit    no commit
+  traffic-surge       no commit    no commit    quota
+```
+
+**Seventeen answers, zero decision flips.** Every case returned the identical
+sha, or the identical decline, every time. Scores: 6/6, 6/6, 5/5.
+
+What does move is confidence — `limiter-misconfig` reported 0.90, 0.95, 0.95
+and `new-error` reported 0.90, 0.85, 0.90. So sampling noise at 0.1 is real and
+it lands on the confidence, not on the answer.
+
+`gemini-2.5-flash` scored 6/6 on this same capture, on two different days.
+
+### So the earlier conclusion was wrong
+
+The previous section reasoned that because the packets were near-identical, the
+1/4-to-4/4 swing "points at model sampling". That inference is now refuted by
+direct measurement: given a fixed packet, both models are decision-stable.
+
+The swing therefore came from the **re-capture** after all — the thing the
+earlier section had argued was too small to explain it. Which of the differences
+did it is not knowable, because that capture was never committed. The
+methodological lesson is the one already flagged and not acted on: **commit
+intermediate captures**, or the evidence needed to explain a result is gone by
+the time the result is interesting.
+
+Recording this rather than quietly amending the earlier section, because the
+sequence is the useful part. An argument from "the inputs look similar" lost to
+a measurement, and the measurement cost eighteen calls.
+
+### What the noise floor actually is
+
+Two different numbers, and conflating them is what caused the confusion:
+
+| | |
+|---|---|
+| **Re-running a stored case** | zero decision variance; confidence ±0.05 |
+| **Re-capturing the set** | enough to flip two of four decline decisions |
+
+So a score is reproducible against a fixed set of case files and is **not**
+comparable across captures. A re-capture creates a new benchmark, and should be
+treated as one — the way a changed prompt or packet already is.
+
+That has a practical consequence for the hunks A/B in the section above. It was
+run on packets captured from identical anomalies, which is the right design, so
+its one-regression result stands on the axis it measured. It could not have been
+run across separate captures at all.
+
+**`LLM_TEMPERATURE` is not the lever it looked like.** It was added expecting to
+show that 0.1 was costing repeatability. It is not: decisions are stable at 0.1
+and lowering it further would buy nothing measurable. The override stays because
+the question is now answerable rather than assumed, which is the point — the
+comment that used to assert this without evidence is what prompted the check.
+
 ### What this does not establish
 
 Four cases and one application shape. The decline half is **2 cases** — the

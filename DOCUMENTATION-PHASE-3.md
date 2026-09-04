@@ -738,11 +738,10 @@ The baseline scores zero on both accuracy axes — the fixture history is built 
 "blame the newest commit" is never right, and it names a commit on both decline
 cases too.
 
-**A single run is a sample, not a measurement.** The same model scored 1/4 on
-declining against the previous capture and 4/4 against this one. One of those
-failures was a case mislabelled by its author, now fixed; the other two flipped
-for reasons not yet established. Repeatability on identical packets is untested
-and quota-blocked. `DOCUMENTATION-EVALS.md` §14.
+**Reproducible within a capture, not across one.** Re-running the stored cases
+gives zero decision variance over 17 answers; re-capturing the set has flipped
+two of four decline decisions. Compare scores within a capture and treat a
+re-capture as a new benchmark. `DOCUMENTATION-EVALS.md` §14.
 
 **The widening did its job immediately.** `llama3.2` answers the same commit to
 all six cases; on the old two-case decline half that read as 2/2 attribution and
@@ -793,11 +792,12 @@ baseline supports.
 | Correlation eval and scorecard | ✅ Built — `pnpm eval --correlation` |
 | `correlations` table | ✅ Written by `correlate.ts` |
 
-Nothing remains in Phase 3 as code. The decline half is four now, and the next
-thing to measure is **repeatability**: re-run identical stored packets several
-times and see how much a score moves on its own. Until that is known, the hunks
-question in §14 cannot be settled either — an A/B cannot resolve a difference
-smaller than the noise, and the noise is unmeasured.
+Nothing remains in Phase 3 as code, and the harness is characterised:
+deterministic against fixed case files, unstable across re-captures. The next
+thing worth building is **capture determinism** — a seeded generator run and a
+fixed fixture anchor, so a re-capture reproduces its predecessor. That is what
+would let a packet or prompt change be measured against the capture before it,
+which is the one thing this harness still cannot do.
 
 ---
 

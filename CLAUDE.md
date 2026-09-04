@@ -40,11 +40,10 @@ harness.
 Phase 3 is **done and measured** on a six-case set (two attributable, four
 declines for four different reasons). `gemini-2.5-flash` scores 2/2 and 4/4;
 `llama3.2` names the same commit to every case and scores 0/4 on declining; the
-"blame the newest commit" baseline scores 0/2 and 0/4. **A single run is a
-sample** — the same model scored 1/4 declining on the previous capture, on a
-packet that differs by ~2% on one number. Model sampling is the leading
-explanation and the direct test is still outstanding.
-`DOCUMENTATION-EVALS.md` §14.
+"blame the newest commit" baseline scores 0/2 and 0/4. Scores are reproducible against a
+fixed set of case files — 17 answers across three repeats, zero decision flips —
+and are **not** comparable across captures, where two of four decline decisions
+have flipped. `DOCUMENTATION-EVALS.md` §14.
 
 Phases 4 (root-cause agent) and 5 (dashboard) are not built.
 
@@ -119,11 +118,17 @@ the commit changing `created_at` formatting could cause it. The scenario was
 changed, not the label. Check a new decline case's error text against every
 commit in the window before pinning it.
 
-**`llmConfig.temperature` is 0.1 and applies to eval runs too.** The comment
-beside it used to claim this made runs repeatable; that was an assumption, and
-two correlation decisions flipped between near-identical packets. Override with
-`LLM_TEMPERATURE` — the outstanding measurement is the same stored packets at 0
-and at 0.1, several times each. Do not change the default before running it.
+**A re-capture creates a new benchmark; treat it like a changed prompt.**
+Re-running stored cases is deterministic (zero decision flips in 17 answers);
+re-capturing has flipped two of four decline decisions. Compare scores within a
+capture, never across. And **commit intermediate captures** — the one that
+produced the anomalous score was not committed, so what caused it is now
+unknowable.
+
+**`llmConfig.temperature` (0.1) is not a repeatability problem.** Measured, not
+assumed: decisions are stable at 0.1, and only confidence moves (±0.05).
+`LLM_TEMPERATURE` overrides it if that ever needs re-testing; lowering the
+default would buy nothing.
 
 **Golden cases are captured artefacts.** They store the rendered prompt as a
 fixed string, so ANY change to the evidence packet invalidates all six. Rebuild

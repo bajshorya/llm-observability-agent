@@ -318,10 +318,16 @@ was being redrawn by a model every capture. The verdict is now pinned as a
 fixture; capturing twice produces identical ones, and capture makes no model
 calls at all.
 
-That fixed the largest source of drift, not all of it — the same model still
-scored 1/4 on declining against one capture and 4/4 against the next. **Treat a
-single correlation run as a sample.** Measuring how far a score moves on its own
-is the next open question, and every other one is downstream of it.
+That fixed the largest source of drift, not all of it. What remains was then
+measured rather than argued about: re-running the stored cases is deterministic
+— 17 answers, zero decision flips, only confidence moving ±0.05 — while
+re-capturing the set has flipped two of four decline decisions.
+
+So **a score is reproducible within a capture and not across one**, and a
+re-capture should be treated as a new benchmark, the way a changed prompt is.
+The reasoning that preceded the measurement had concluded the opposite, from
+"the packets look similar"; `EVALS` §14 keeps both, because the sequence is the
+useful part.
 
 The attempt to fix that case — adding diff hunks so an innocent commit can be
 ruled out — was built, measured with and without on identical anomalies, and
