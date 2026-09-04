@@ -7,7 +7,8 @@
  * opinions about what the traffic looks like — that is entirely `scenarios.ts`.
  *
  * THREE COMMANDS
- *   backfill   Generate N minutes of healthy history ending now, in one shot.
+ *   backfill   Generate N minutes of healthy history ending now (or at
+ *              --end-at), in one shot.
  *              Detection compares a window against a TRAILING BASELINE, so
  *              without this you would have to wait an hour in real time before
  *              any detector could say anything. This is the command that makes
@@ -75,12 +76,15 @@ Options:
   --service <name>  Service name                         (default: ${BASELINE.service})
   --rpm <n>         Requests per minute                  (default: ${BASELINE.requestsPerMinute})
   --seed <n>        PRNG seed for reproducible output     (default: 42)
+  --end-at <iso>    Absolute instant the traffic ends at   (default: now)
+                    With --seed, this makes a run byte-for-byte reproducible.
   --url <url>       Ingestion endpoint                    (default: ${DEFAULT_INGEST_URL})
   -h, --help        Show this message
 
 Examples:
   pnpm generate backfill --minutes 180
   pnpm generate inject --scenario new-error --minutes 5
+  pnpm generate backfill --end-at 2026-08-16T19:00:00Z   # reproducible capture
   pnpm generate live
 `.trim();
 
@@ -89,6 +93,17 @@ interface Options {
   scenario: ScenarioName | undefined;
   profile: TrafficProfile;
   seed: number;
+  /**
+   * Absolute instant the generated traffic ends at, or undefined for "now".
+   *
+   * Traffic values are already deterministic — the PRNG is seeded and defaults
+   * to 42 — but the TIMESTAMPS were wall-clock, so two runs of the same command
+   * landed on different minute boundaries relative to the detection window and
+   * produced slightly different aggregates. That was enough to move a p95 by a
+   * couple of percent, and a couple of percent was enough to flip a correlation
+   * decision. See `DOCUMENTATION-EVALS.md` §14.
+   */
+  endAt?: Date | undefined;
   url: string;
 }
 
@@ -162,7 +177,22 @@ function report(label: string, entries: GeneratedEntry[], result: IngestResult):
   }
 }
 
-/** Generate `minutes` of history ending now, all in one shot. */
+/**
+ * Parse `--end-at`. Rejects an unparseable value rather than falling back to
+ * `now`: a silent fallback would produce a capture that looks reproducible,
+ * is not, and gives no sign of it until two runs disagree.
+ */
+function parseEndAt(value: string | undefined): Date | undefined {
+  if (value === undefined) return undefined;
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`--end-at must be an ISO 8601 instant, got "${value}"`);
+  }
+  return parsed;
+}
+
+/** Generate `minutes` of history ending at `endAt`, or now, all in one shot. */
 async function generateHistory(options: Options, label: string): Promise<void> {
   const rng = createRng(options.seed);
   /**
@@ -175,7 +205,7 @@ async function generateHistory(options: Options, label: string): Promise<void> {
    * deploy banner emitted at offset zero fell outside the window it explains.
    * Aligning here makes an injection land on exactly the minutes it claims to.
    */
-  const endMs = Math.floor(Date.now() / 60_000) * 60_000;
+  const endMs = Math.floor((options.endAt?.getTime() ?? Date.now()) / 60_000) * 60_000;
   const startMs = endMs - options.minutes * 60_000;
   const scenario = options.scenario ? SCENARIOS[options.scenario] : undefined;
 
@@ -267,6 +297,7 @@ async function main(): Promise<void> {
       service: { type: "string" },
       rpm: { type: "string" },
       seed: { type: "string" },
+      "end-at": { type: "string" },
       url: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
@@ -284,6 +315,7 @@ async function main(): Promise<void> {
     minutes: Math.max(1, Math.round(parsePositiveNumber(values.minutes, defaultMinutes, "minutes"))),
     scenario: parseScenario(values.scenario),
     seed: Math.round(parsePositiveNumber(values.seed, 42, "seed")),
+    endAt: parseEndAt(values["end-at"]),
     url: values.url ?? DEFAULT_INGEST_URL,
     profile: {
       ...BASELINE,
