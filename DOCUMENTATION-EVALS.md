@@ -1573,6 +1573,73 @@ and lowering it further would buy nothing measurable. The override stays because
 the question is now answerable rather than assumed, which is the point — the
 comment that used to assert this without evidence is what prompted the check.
 
+### Making a re-capture reproduce its predecessor
+
+The noise floor above is two numbers only because re-capturing was
+nondeterministic. That is now fixed, and the fix was smaller than the
+investigation that found it.
+
+The generator's PRNG has been seeded since Phase 0 and defaults to 42, so the
+traffic *values* were already reproducible. What was not was the *timestamps*:
+history ended at `Date.now()` floored to a minute, so two runs of the same
+command landed on different minute boundaries relative to the detection window
+and aggregated slightly differently. That is where the ~2% p95 difference came
+from, and a couple of percent turned out to be enough to flip a correlation
+decision.
+
+`--end-at <iso>` pins the instant traffic ends at. The capture script sets it to
+two minutes past the fixture's own **pinned** anchor, so both halves of the
+packet now sit at one fixed point in time:
+
+```bash
+pnpm generate backfill --minutes 120 --end-at 2026-08-16T19:02:00Z
+pnpm generate inject --scenario new-error --minutes 5 --end-at 2026-08-16T19:02:00Z
+```
+
+An unparseable `--end-at` throws rather than falling back to `now` — a silent
+fallback would produce a capture that looks reproducible, is not, and gives no
+sign of it until two runs disagree.
+
+**Verified by capturing the whole set twice, from scratch, and diffing:**
+
+```
+  error-spike          context identical: True   label identical: True
+  latency-jump         context identical: True   label identical: True
+  limiter-misconfig    context identical: True   label identical: True
+  new-error            context identical: True   label identical: True
+  orphan-refund-bug    context identical: True   label identical: True
+  traffic-surge        context identical: True   label identical: True
+```
+
+Every packet and every label byte-identical. The only field that moves is
+`capturedAt`, which is provenance rather than evidence — and that gives a useful
+invariant: **after a re-capture, `git diff` should touch only `capturedAt`.**
+Anything else in that diff is a real change to the evidence, not capture noise,
+which makes the whole capture path checkable by inspection.
+
+Dropping `--anchor now` also brings back the fixture's documented shas, so the
+commits named in `DOCUMENTATION-PHASE-3.md` §3 are once again the ones in the
+cases.
+
+### What this changes about everything above
+
+Scores are now comparable across captures, which they have not been at any
+earlier point in this document. Concretely:
+
+- The hunks A/B can be re-run properly. It was already the right design —
+  arms captured from identical anomalies — but it could not have been checked
+  against a later capture. Now it can.
+- Model comparisons can be run on different days without re-capturing being a
+  confound.
+- The two numbers in "What the noise floor actually is" collapse toward one.
+  Within-capture variance was already zero for decisions; cross-capture
+  variance is now zero by construction, and verified.
+
+**The set was re-captured to get here, so no score in this document carries
+over.** Two cases have been re-scored on the new capture and both are correct;
+the rest is a quota away. That is the cost of the fix, and it is the last time
+it should be necessary for this reason.
+
 ### What this does not establish
 
 Four cases and one application shape. The decline half is **2 cases** — the

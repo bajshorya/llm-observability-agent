@@ -40,10 +40,9 @@ harness.
 Phase 3 is **done and measured** on a six-case set (two attributable, four
 declines for four different reasons). `gemini-2.5-flash` scores 2/2 and 4/4;
 `llama3.2` names the same commit to every case and scores 0/4 on declining; the
-"blame the newest commit" baseline scores 0/2 and 0/4. Scores are reproducible against a
-fixed set of case files — 17 answers across three repeats, zero decision flips —
-and are **not** comparable across captures, where two of four decline decisions
-have flipped. `DOCUMENTATION-EVALS.md` §14.
+"blame the newest commit" baseline scores 0/2 and 0/4. Scores are reproducible: 17 answers across
+three repeats with zero decision flips, and captures are now deterministic too,
+so results compare across runs. `DOCUMENTATION-EVALS.md` §14.
 
 Phases 4 (root-cause agent) and 5 (dashboard) are not built.
 
@@ -118,12 +117,12 @@ the commit changing `created_at` formatting could cause it. The scenario was
 changed, not the label. Check a new decline case's error text against every
 commit in the window before pinning it.
 
-**A re-capture creates a new benchmark; treat it like a changed prompt.**
-Re-running stored cases is deterministic (zero decision flips in 17 answers);
-re-capturing has flipped two of four decline decisions. Compare scores within a
-capture, never across. And **commit intermediate captures** — the one that
-produced the anomalous score was not committed, so what caused it is now
-unknowable.
+**Correlation captures are deterministic — keep them that way.** Fixture and
+traffic are both pinned to a fixed instant (`--end-at`, and the fixture's
+default anchor rather than `--anchor now`). Two independent captures produce
+byte-identical packets and labels. **After a re-capture, `git diff` should touch
+only `capturedAt`** — anything else is a real change to the evidence, and that
+is the check. Do not reintroduce `--anchor now` or drop `--end-at`.
 
 **`llmConfig.temperature` (0.1) is not a repeatability problem.** Measured, not
 assumed: decisions are stable at 0.1, and only confidence moves (±0.05).

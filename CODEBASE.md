@@ -932,6 +932,10 @@ Environment (`.env`, all optional — defaults work):
 | `LLM_PROVIDER` | `stub` | `gemini \| nvidia \| openrouter \| ollama \| stub` |
 | `LLM_MODEL` | per provider | Overrides the default model |
 | `LLM_TEMPERATURE` | 0.1 | Sampling override, for measuring eval repeatability |
+
+The generator takes `--seed` (default 42) and `--end-at <iso>`. Together they
+make a run byte-for-byte reproducible, which is what makes a correlation
+re-capture reproduce its predecessor.
 | `GEMINI_API_KEY` | — | Free tier, no card |
 | `NVIDIA_API_KEY` | — | Free developer tier |
 | `OPENROUTER_API_KEY` | — | Free `:free` variants |
@@ -1060,12 +1064,13 @@ why `pnpm classify` caps a run at 10 anomalies. Quota is bucketed per model, so
 provider in use is free and a cost column reading `0.00` would imply precision
 that isn't there.
 
-**Scores are reproducible within a capture and not across captures.** Measured:
-re-running stored cases gives zero decision variance over 17 answers (only
-confidence moves, ±0.05), while re-capturing the set has flipped two of four
-decline decisions. So a re-capture creates a new benchmark and should be treated
-like a changed prompt. What in a re-capture does the flipping is unknown,
-because the capture that produced the anomalous score was never committed.
+**Scores are reproducible, and captures are deterministic.** Re-running stored
+cases gives zero decision variance over 17 answers (only confidence moves,
+±0.05). Re-capturing used to flip decisions; the generator's timestamps were
+wall-clock, so runs landed on different minute boundaries and aggregated ~2%
+apart. `--end-at` pins them, and two independent captures now produce
+byte-identical packets — verified. After a re-capture, `git diff` should touch
+only `capturedAt`.
 
 **The packet cannot exonerate an innocent commit.** With no diff content,
 `src/routes/orders.js +2/-1` could be a string format or a synchronous network
@@ -1112,11 +1117,11 @@ reasoning and what it costs.
 Note the change of approach from the original plan: correlation reads a **local
 checkout**, not the GitHub API. `GITHUB_TOKEN` and `GITHUB_REPO` are vestigial.
 
-Phase 3 is complete as code, and its harness is now characterised: reproducible
-within a capture, not across one. What it needs next is **capture determinism**
-— a seeded generator run and a fixed fixture anchor would make a re-capture
-reproduce its predecessor, which is the only thing that would let scores be
-compared across packet or prompt changes.
+Phase 3 is complete as code and its harness is reproducible end to end: stable
+across repeats, and deterministic across captures. What that unblocks is
+everything that needed a stable baseline — re-running the hunks A/B against a
+later capture, and comparing models on different days without re-capture being a
+confound.
 
 One decision precedes the golden cases — whether `deploy-restart`'s fabricated
 deploy sha becomes a real one. It would make the strongest `null` test in the

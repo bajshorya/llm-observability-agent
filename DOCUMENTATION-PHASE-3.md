@@ -738,10 +738,10 @@ The baseline scores zero on both accuracy axes — the fixture history is built 
 "blame the newest commit" is never right, and it names a commit on both decline
 cases too.
 
-**Reproducible within a capture, not across one.** Re-running the stored cases
-gives zero decision variance over 17 answers; re-capturing the set has flipped
-two of four decline decisions. Compare scores within a capture and treat a
-re-capture as a new benchmark. `DOCUMENTATION-EVALS.md` §14.
+**Reproducible, and now deterministic across captures too.** Re-running the
+stored cases gives zero decision variance over 17 answers. Re-capturing used to
+flip decisions — the generator's timestamps were wall-clock — and `--end-at`
+pins them, verified by capturing twice and diffing. `DOCUMENTATION-EVALS.md` §14.
 
 **The widening did its job immediately.** `llama3.2` answers the same commit to
 all six cases; on the old two-case decline half that read as 2/2 attribution and
@@ -792,12 +792,11 @@ baseline supports.
 | Correlation eval and scorecard | ✅ Built — `pnpm eval --correlation` |
 | `correlations` table | ✅ Written by `correlate.ts` |
 
-Nothing remains in Phase 3 as code, and the harness is characterised:
-deterministic against fixed case files, unstable across re-captures. The next
-thing worth building is **capture determinism** — a seeded generator run and a
-fixed fixture anchor, so a re-capture reproduces its predecessor. That is what
-would let a packet or prompt change be measured against the capture before it,
-which is the one thing this harness still cannot do.
+Nothing remains in Phase 3 as code, and the harness is now reproducible end to
+end. What that unblocks, in order: **re-score the set** (it was re-captured to
+get here, so no earlier number carries over — two cases are re-scored and
+correct), then **re-run the hunks A/B** against a later capture, which was
+impossible before, then **compare models** without re-capture being a confound.
 
 ---
 

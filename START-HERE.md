@@ -323,11 +323,14 @@ measured rather than argued about: re-running the stored cases is deterministic
 — 17 answers, zero decision flips, only confidence moving ±0.05 — while
 re-capturing the set has flipped two of four decline decisions.
 
-So **a score is reproducible within a capture and not across one**, and a
-re-capture should be treated as a new benchmark, the way a changed prompt is.
-The reasoning that preceded the measurement had concluded the opposite, from
-"the packets look similar"; `EVALS` §14 keeps both, because the sequence is the
+The reasoning that preceded that measurement had concluded the opposite, from
+"the packets look similar". `EVALS` §14 keeps both, because the sequence is the
 useful part.
+
+The cross-capture half is now fixed rather than just characterised: the
+generator's traffic values were always seeded, but its timestamps were
+wall-clock, so runs aggregated a couple of percent apart. `--end-at` pins them,
+and two independent captures now produce byte-identical packets.
 
 The attempt to fix that case — adding diff hunks so an innocent commit can be
 ruled out — was built, measured with and without on identical anomalies, and
