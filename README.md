@@ -39,8 +39,8 @@ later one wins — `START-HERE.md` lists the known cases.
 | **1** | Rollup worker + Tier 1 statistical detectors (no LLM) | ✅ Done |
 | **2** | Tier 2 LLM classifier, provider layer, cost logging | ✅ Done |
 | **3** | Commit correlation agent | ✅ Done |
-| 4 | Root-cause + fix agent (human-gated) | |
-| 5 | Next.js dashboard with reasoning trace | |
+| 4 | Root-cause + fix agent (human-gated) | Not built |
+| **5** | Next.js dashboard with reasoning trace | ✅ Done |
 
 Phase 3 is measured on a six-case set — four of them declines, for four
 different reasons. `gemini-2.5-flash` scores 2/2 and 4/4 against a
@@ -295,6 +295,46 @@ kept and switched off. `DOCUMENTATION-EVALS.md` §14 has both stories.
 
 ---
 
+## Dashboard (Phase 5)
+
+Everything above produces rows in SQLite that only a `pnpm` command can see.
+This makes it a URL.
+
+```bash
+pnpm dashboard        # localhost:3000, reads DATABASE_URL like every other command
+```
+
+Two pages. `/` is the timeline — every anomaly newest first, severity in the
+left border, with the funnel across the top: raised, classified, real,
+correlated. Dismissed windows stay in the list, because they are the evidence
+that the expensive tier does something.
+
+`/anomaly/[id]` is the reasoning trace, and it is the point. Five panels in
+pipeline order:
+
+| Panel | Shows |
+|---|---|
+| What the statistics found | each trigger with its own numbers — observed, baseline, z-score — plus raw log lines |
+| What the model judged | verdict, severity, affected area, summary |
+| **What the model was actually shown** | the evidence packet, **verbatim** |
+| Which commit explains it | sha, confidence, reasoning, implicated files — or a stated `null` |
+| What it cost | every model call, including the ones that failed |
+
+The packet panel is `pnpm classify --preview <id>` with a URL. It is rebuilt at
+request time by the same pure renderer the pipeline uses, so the page and the
+model cannot show different things.
+
+**It is entirely read-only.** No button classifies, correlates or re-runs
+anything — each of those spends quota, and a button is a page refresh away from
+draining a day of it. The pipeline stays a set of deliberate acts; the dashboard
+reports what they concluded.
+
+**Empty states are the common case.** Most anomalies are unclassified and most
+classified ones are uncorrelated — that is the funnel working. Each unfinished
+stage names the command that would advance it.
+
+---
+
 ## Evals
 
 Six golden cases — three real incidents, three benign windows that trip Tier 1
@@ -360,6 +400,8 @@ prompt is byte-for-byte unchanged since before the first Gemini run.
 packages/
   shared/      Zod schemas + error-signature normalisation. The contract
                every other package imports.
+  dashboard/   Next.js read-only UI: the anomaly timeline and the
+               per-anomaly reasoning trace. Reads the database directly.
   backend/     Fastify ingestion API, Drizzle schema, SQLite client,
                the Tier 1 detection pipeline (src/detection), the LLM
                provider layer (src/llm), the Tier 2 classifier
@@ -460,6 +502,8 @@ pnpm typecheck            # strict TS across all packages
 pnpm correlate            # Phase 3 — which commit, or none
 pnpm correlate --preview  # the exact correlation prompt, no call
 pnpm correlate --stats    # the correlation funnel
+
+pnpm dashboard            # the timeline and reasoning trace on :3000
 
 pnpm eval --correlation               # score the correlation set
 pnpm eval --correlation --provider stub   # the blame-the-newest baseline
