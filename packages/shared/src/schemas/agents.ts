@@ -16,7 +16,7 @@
  *                                   how bad, and where? → `classificationSchema`
  *   correlator   (Phase 3)          Which recent commit most likely caused it?
  *                                   → `correlationSchema`
- *   root_cause   (Phase 4)          Why did it break and what is the fix?
+ *   root_cause   (Phase 4, built)   Why did it break and what is the fix?
  *                                   → `hypothesisSchema`
  *
  * Separate prompts and schemas per role rather than one mega-prompt: cheaper,
@@ -81,6 +81,20 @@ export type Correlation = z.infer<typeof correlationSchema>;
 
 /** Root-cause agent: the human-readable answer, plus a proposed fix. */
 export const hypothesisSchema = z.object({
+  /**
+   * Whether the diff actually explains the failure.
+   *
+   * Added in Phase 4, and it is the same lesson `suspectedCommitSha` learned
+   * one stage earlier: a model with no way to decline will not decline, it will
+   * produce a confident explanation of something it cannot see. Correlation
+   * named a commit; that does not oblige this stage to agree, and a stated
+   * disagreement between the two is far more useful than a fabricated
+   * mechanism that reconciles them.
+   *
+   * False does not mean the fields below are empty — `rootCause` should then
+   * say what the diff does NOT account for, which is itself a finding.
+   */
+  explainsTheFailure: z.boolean(),
   rootCause: z.string().min(10).max(2000),
   suggestedFix: z.string().min(10).max(4000),
   /** How sure the model is that this explains the observed behaviour. */
