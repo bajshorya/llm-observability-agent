@@ -39,7 +39,7 @@ later one wins — `START-HERE.md` lists the known cases.
 | **1** | Rollup worker + Tier 1 statistical detectors (no LLM) | ✅ Done |
 | **2** | Tier 2 LLM classifier, provider layer, cost logging | ✅ Done |
 | **3** | Commit correlation agent | ✅ Done |
-| 4 | Root-cause + fix agent (human-gated) | Not built |
+| **4** | Root-cause + fix agent (human-gated) | ✅ Done |
 | **5** | Next.js dashboard with reasoning trace | ✅ Done |
 
 Phase 3 is measured on a six-case set — four of them declines, for four
@@ -108,7 +108,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 162 unit tests; 27 of them over the detectors and stats
+pnpm test                   # 177 unit tests; 27 of them over the detectors and stats
 ```
 
 A firing window looks like this:
@@ -292,6 +292,41 @@ An attempt to fix a specific failure by adding diff hunks to the packet was
 built, measured against the same anomalies with and without, and **not adopted**
 — one regression, no reproducible benefit, 3.7× packet growth. The capability is
 kept and switched off. `DOCUMENTATION-EVALS.md` §14 has both stories.
+
+---
+
+## Root cause (Phase 4)
+
+The last stage. It reads the diff of the commit correlation blamed, and answers
+why that change broke this and what to do about it.
+
+```bash
+pnpm diagnose             # diagnose attributed incidents
+pnpm diagnose --preview   # the exact prompt, calls nothing
+pnpm diagnose --stats     # the funnel, and the applied count
+```
+
+**The diff is mandatory here, and that is the contrast worth understanding.** In
+correlation, hunks are a measured trade — they help a capable model and degrade
+a weak one, so they are a switch. Here there is nothing to trade: `pricing.js
++7/-1` cannot produce a patch. It is also the only packet in the system with no
+budget on its largest section, because a root cause found in the truncated half
+is a root cause missed.
+
+**It is allowed to disagree with the stage before it.** `hypothesisSchema` gained
+`explainsTheFailure` in this phase, applying what Phase 3 measured: a model with
+no way to decline does not decline, it fabricates. The risk is sharper here,
+because this stage is *handed* an attribution and asked to explain it.
+
+That field earned its place on its first real call. Given a correlation that had
+blamed a CI-workflow commit, the model read the diff and returned `false` at 0.95
+confidence — "it does not alter any application code that would be deployed …
+and therefore cannot directly cause a runtime TypeError". A disagreement between
+two stages is worth far more than a mechanism invented to reconcile them.
+
+**Nothing is ever applied.** `hypotheses.applied` defaults to false and no code
+in this repository writes it — no flag, no button, no path. The agent diagnoses;
+a human decides.
 
 ---
 
@@ -490,7 +525,7 @@ mean less.
 | `metrics_rollup` | Per-minute aggregates so detection reads cheap summaries, not millions of rows. |
 | `anomalies` | Tier 1 output (window + triggers), enriched by Tier 2 (severity, summary, `is_real_incident`, `affected_area`). Benign windows end up `dismissed`. |
 | `correlations` | Suspected commit, confidence, reasoning, implicated files. A **null** sha is still a row — "considered and declined" is a finding, and it must stay distinguishable from "never ran". |
-| `hypotheses` | Root cause and suggested fix. `applied` stays `false` — human gate. |
+| `hypotheses` | Root cause, suggested fix, and whether the diff explains the failure at all. `applied` stays `false` — human gate, and no code writes it. |
 | `llm_calls` | Tokens and latency per call. This is what substantiates the two-tier cost claim. |
 
 ---
@@ -503,6 +538,9 @@ pnpm correlate            # Phase 3 — which commit, or none
 pnpm correlate --preview  # the exact correlation prompt, no call
 pnpm correlate --stats    # the correlation funnel
 
+pnpm diagnose             # Phase 4 — why it broke, and what to change
+pnpm diagnose --stats     # the diagnosis funnel
+
 pnpm dashboard            # the timeline and reasoning trace on :3000
 
 pnpm eval --correlation               # score the correlation set
@@ -510,7 +548,7 @@ pnpm eval --correlation --provider stub   # the blame-the-newest baseline
 
 bash scripts/build-fixture-repo.sh    # the repo correlation reads
 
-pnpm test                 # 162 unit tests, no network required
+pnpm test                 # 177 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
   WHERE error_signature IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;"
