@@ -1,0 +1,14 @@
+{
+  "name": "new-error-ci",
+  "scenario": "new-error",
+  "capturedAt": "2026-09-05T03:22:20.727Z",
+  "sha": "8a38dbc5a436891c3eb3209e5bd156ea1eb7694a",
+  "expect": {
+    "explainsTheFailure": false,
+    "note": "A GitHub Actions workflow file. It does not run in production and cannot throw a TypeError there, whatever the correlation said"
+  },
+  "commitFiles": [
+    ".github/workflows/ci.yml"
+  ],
+  "context": "Service: orders-api\nWindow: 2026-08-16T18:57:00.000Z to 2026-08-16T19:02:00.000Z (5 min)\nSeverity: critical\nAffected area: orders-api\n\nWhat the classification stage concluded:\n  Stub classification for orders-api: 2 Tier 1 signal(s) fired (error_rate_spike, new_error_signature). Severity is scored from which detectors tripped — no model was called. Set LLM_PROVIDER to classify for real.\n\nWhat the detectors found:\n- error_rate_spike: 335 errors in the window against a baseline of 0.53/min (sd 0.79, z=84.01)\n- new_error_signature: \"TypeError: Cannot read properties of null (reading <str>)\" occurred 333 times and appears nowhere in the baseline hour\n    raw example: TypeError: Cannot read properties of null (reading 'toFixed')\n\nWhat the correlation stage concluded:\n  Commit 8a38dbc5a4 (confidence 0.25)\n  Files implicated: (none named)\n  Reasoning: Stub correlation: this is simply the most recent commit in the candidate list — the naive 'blame the last deploy' heuristic, applied without reading anything. No model was called, and no mechanism was checked. Set LLM_PROVIDER to correlate for real.\n\nThe commit, in full:\n\n  8a38dbc5a4  2026-08-16 18:20Z  —  orders-api ci\n    chore(ci): cache the pnpm store between runs\n      Install was 90 seconds of every run. Cache key is the lockfile hash.\n    files (1):\n      .github/workflows/ci.yml  +13/-0\n\n    diff:\n      diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n      new file mode 100644\n      index 0000000..29ae3b4\n      --- /dev/null\n      +++ b/.github/workflows/ci.yml\n      @@ -0,0 +1,13 @@\n      +name: ci\n      +on: [push]\n      +jobs:\n      +  test:\n      +    runs-on: ubuntu-latest\n      +    steps:\n      +      - uses: actions/checkout@v4\n      +      - uses: actions/setup-node@v4\n      +        with:\n      +          node-version: 20\n      +          cache: pnpm\n      +      - run: pnpm install --frozen-lockfile\n      +      - run: pnpm test"
+}

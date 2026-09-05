@@ -183,7 +183,7 @@ weak demonstration.
 
 ## 10. Verified behaviour
 
-`pnpm typecheck` clean across all four packages, 177 tests pass, `next build`
+`pnpm typecheck` clean across all four packages, 197 tests pass, `next build`
 succeeds. Checked against a seeded database:
 
 - timeline renders the funnel and one classified, correlated anomaly

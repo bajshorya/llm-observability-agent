@@ -184,7 +184,7 @@ rather than producing a confident explanation of a commit that no longer exists.
 
 ## 9. Verified behaviour
 
-`pnpm typecheck` clean across four packages, **177 tests pass**, up from 163.
+`pnpm typecheck` clean across four packages, **197 tests pass**, up from 163.
 
 End to end against a seeded database:
 
@@ -200,11 +200,17 @@ The first real call disagreed with its input, correctly. See §4.
 
 ## 10. Known limitations
 
-- **No eval.** There is no golden set for root cause and no scorecard. Scoring
-  it is harder than the two stages before it: "is this mechanism right" and "is
-  this fix good" are not boolean, and grading prose needs a human or a second
-  model marking the first one's homework. The classifier and correlator evals
-  both work because their central question has an unambiguous answer.
+- **Prose quality is not measured, and will not be.** "Is this mechanism right"
+  and "is this fix good" need a human or a second model marking the first one's
+  homework, and a metric that cannot be trusted is worse than none.
+
+  This section previously said Phase 4 had **no eval at all**, for that reason.
+  That was half right and stopped one step too early: `explainsTheFailure` is a
+  boolean with a correct value per case, and is scorable for exactly the reason
+  `suspectedCommitSha`'s null is. There is now a five-case set built in pairs —
+  the same incident attributed once to the guilty commit and once to an innocent
+  one — plus a mechanical check that a proposed fix names a file the commit
+  actually touched. `DOCUMENTATION-EVALS.md` §16.
 - **Incidents with no attributable commit get nothing.** §1.
 - **One commit only.** A failure caused by the interaction of two changes cannot
   be expressed, because the correlator names one sha and this stage reads one

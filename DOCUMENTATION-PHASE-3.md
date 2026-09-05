@@ -653,7 +653,7 @@ Three `git log` flags are worth knowing about, all in `GIT_LOG_ARGS`:
 
 ## 11. Verified behaviour
 
-`pnpm typecheck` clean. **177 tests pass**, up from 81 — 19 for the parser and
+`pnpm typecheck` clean. **197 tests pass**, up from 81 — 19 for the parser and
 packet, 6 for prompt discipline, 11 for grounding, 4 for the stub's baseline, 21
 for the correlation scorer, 6 for diff rendering and 5 for the pinned verdicts.
 Only the last reads the filesystem, and only to validate committed fixtures.

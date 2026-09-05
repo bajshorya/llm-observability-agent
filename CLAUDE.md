@@ -52,8 +52,9 @@ the blamed commit's diff and produces a hypothesis plus a suggested fix, gated
 behind `applied = false`. The dashboard is a Next.js app with a timeline and a
 per-anomaly reasoning trace, read-only.
 
-**Every phase is now built.** What is missing is an eval for Phase 4 — see
-`DOCUMENTATION-PHASE-4.md` §10 for why it is harder than the two before it.
+**Every phase is built and every stage has an eval.** `bash scripts/demo.sh`
+runs the whole pipeline offline in one command. What is open is measurement
+that needs quota — see `CODEBASE.md` §20.
 
 The two-tier claim is **measured, not asserted**: on `gemini-3.5-flash` the
 golden set scores 6/6 on every axis, stably; the statistical baseline scores 0/3
@@ -62,7 +63,7 @@ on the benign half. See `DOCUMENTATION-EVALS.md` §10.
 ## Commands
 
 ```bash
-pnpm typecheck && pnpm test        # 177 tests, ~300ms, no network
+pnpm typecheck && pnpm test        # 197 tests, ~300ms, no network
 pnpm backend                       # ingestion API on :4000
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -73,6 +74,9 @@ pnpm correlate --preview           # the exact prompt, calls nothing
 pnpm eval --provider gemini        # score the classifier golden set
 pnpm eval --correlation            # score the correlation set (6 cases)
 pnpm eval --correlation --diff     # score the with-hunks arm instead
+pnpm eval --diagnosis              # score the Phase 4 set (5 paired cases)
+
+bash scripts/demo.sh               # the whole pipeline, one command, offline
 LLM_MODEL=llama3.2 pnpm eval --correlation --provider ollama   # free, local, no quota
 LLM_TEMPERATURE=0 pnpm eval --correlation          # for repeatability runs
 
@@ -175,6 +179,12 @@ is the check. Do not reintroduce `--anchor now` or drop `--end-at`.
 assumed: decisions are stable at 0.1, and only confidence moves (±0.05).
 `LLM_TEMPERATURE` overrides it if that ever needs re-testing; lowering the
 default would buy nothing.
+
+**Diagnosis cases are built in PAIRS, and that is the whole design.** The same
+incident attributed once to the guilty commit and once to an innocent one. A
+model that reads the diff answers differently; one that agrees with whatever it
+was handed answers the same to both and scores 50%. Never add a diagnosis case
+without its opposite.
 
 **Golden cases are captured artefacts.** They store the rendered prompt as a
 fixed string, so ANY change to the evidence packet invalidates all six. Rebuild

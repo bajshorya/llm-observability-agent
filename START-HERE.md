@@ -71,7 +71,7 @@ why the default provider is an offline stub.
 In every module, the logic that decides things has no database, clock, or I/O —
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `grounding.ts`. The
 code that touches the database is separate — `engine.ts`, `rollup.ts`,
-`classify.ts`, `calls.ts`. That split is why 177 tests run in 300ms with no
+`classify.ts`, `calls.ts`. That split is why 197 tests run in 300ms with no
 fixtures — including a `git log` parser tested entirely on strings, with no
 repository anywhere near it. **When you are hunting for logic, it is in a pure file.**
 
@@ -178,6 +178,7 @@ want the extended reasoning behind a particular decision.
 | Why would an anomaly be dismissed? | `PHASE-2` §9 and `EVALS` §3 |
 | Is the classifier any good? | `EVALS` §8–10 |
 | Is the correlator any good? | `EVALS` §14 |
+| Is the root-cause agent any good? | `EVALS` §16 |
 | Does this use RAG? | `AI-LAYER` §6 — no, and why not |
 | What does "agent" mean here? | `AI-LAYER` §2 |
 | How is the model's output validated? | `AI-LAYER` §4, §9 |
@@ -226,6 +227,17 @@ question, not reading you owe.
 | Ingestion, schemas and the generator in detail | `DOCUMENTATION` §6–8 |
 
 ### Step 3, concretely
+
+The whole pipeline, in one command, offline and with no API key:
+
+```bash
+bash scripts/demo.sh
+```
+
+That is the fastest way to see it work, and it removes a trap: the fixture
+repository has to overlap the generated traffic in time, or correlation finds
+zero candidates and the most interesting stage does nothing. The script pins
+both. By hand, it is:
 
 ```bash
 pnpm backend                                   # terminal 1

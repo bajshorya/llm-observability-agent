@@ -52,6 +52,29 @@ harness's own defects are written up alongside the numbers in
 
 ## Quick start
 
+**The whole thing, in one command:**
+
+```bash
+bash scripts/demo.sh
+```
+
+No API key, no network, no quota. It builds the target repository, generates
+traffic, and runs all four stages in order, printing what each concluded and
+the funnel at the end. It writes to a scratch database under `.tmp/` and never
+touches `data/dev.db`.
+
+Every stage runs against the deterministic stub, which is not a mock — it is the
+**baseline each tier has to beat**, so the output is a fair picture of what the
+statistics alone conclude. To see what a model adds:
+
+```bash
+bash scripts/demo.sh gemini
+bash scripts/demo.sh gemini deploy-restart   # a benign window instead
+```
+
+The rest of this section is the same thing done by hand.
+
+
 ```bash
 pnpm install
 cp .env.example .env          # defaults work as-is for local development
@@ -108,7 +131,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 177 unit tests; 27 of them over the detectors and stats
+pnpm test                   # 197 unit tests; 27 of them over the detectors and stats
 ```
 
 A firing window looks like this:
@@ -599,10 +622,11 @@ pnpm dashboard            # the timeline and reasoning trace on :3000
 
 pnpm eval --correlation               # score the correlation set
 pnpm eval --correlation --provider stub   # the blame-the-newest baseline
+pnpm eval --diagnosis                 # score the Phase 4 set
 
 bash scripts/build-fixture-repo.sh    # the repo correlation reads
 
-pnpm test                 # 177 unit tests, no network required
+pnpm test                 # 197 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
   WHERE error_signature IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;"

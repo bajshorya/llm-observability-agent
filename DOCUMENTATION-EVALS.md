@@ -1720,6 +1720,106 @@ regressed in the earlier A/B, so it is the one whose result would decide whether
 the default should change. Until then the default stays off, and the switch
 exists for anyone who has measured their own model.
 
+## 15. Adding a correlation case
+
+1. Add the scenario to `SCENARIO_NAMES` and `SCENARIOS` in the generator with
+   `benign: false` — a benign scenario is dismissed by Tier 2 and never reaches
+   correlation.
+2. Give it evidence that links to a commit, or deliberately does not. The link
+   should be checkable, not given away: no sha in any log line.
+3. Verify it trips Tier 1 *and* that Tier 2 confirms it. If either fails, the
+   case tests nothing, and `capture-correlation-cases.sh` says so loudly.
+4. Add it to that script with `--sha <sha|none>` and a `--note` that argues for
+   the label.
+
+`--sha` is resolved against the candidates in the packet being captured, and
+capture fails if it matches none. A case expecting a commit its own evidence
+does not contain would score every model wrong forever and look like a model
+problem rather than a labelling one.
+
+---
+
+## 16. The diagnosis eval, and the section that said it was impossible
+
+`DOCUMENTATION-PHASE-4.md` §10 recorded that Phase 4 had no eval, because "is
+this mechanism right" and "is this fix good" are not boolean, and the two evals
+that work both hang on a question with an unambiguous answer.
+
+That was half right, and it stopped one step too early. The prose is not
+scorable. **`explainsTheFailure` is** — it is a boolean, and for a given commit
+and a given incident there is a correct value. That is the same shape as
+`suspectedCommitSha`'s null, and scorable for the same reason.
+
+### The set is five cases, built in pairs
+
+Each incident is captured **twice**: once attributed to the commit that really
+caused it, once to a commit that plainly could not have. Identical symptoms,
+identical packet, one field different.
+
+| Case | Attributed to | Correct answer |
+|---|---|---|
+| `new-error-guilty` | the pricing commit | **explains** — the diff adds a `toFixed` on a nullable column |
+| `new-error-ci` | the CI workflow commit | rejects — a GitHub Actions file cannot throw in production |
+| `new-error-docs` | the README commit | rejects — no executable code |
+| `limiter-guilty` | the token-bucket commit | **explains** — it ships the burst and refill the warning reports |
+| `limiter-pricing` | the pricing commit | rejects — a read-path formatting change cannot cause quota rejections |
+
+**The pairing is the whole design.** A model that reads the diff answers
+differently to the two halves. A model that agrees with whatever it was handed
+answers the same to both and scores 50%. Without the pairs, "reads the diff" and
+"trusts the correlation" are indistinguishable — the same trap the correlation
+set avoids with four declines for four different reasons.
+
+Building the innocent half needs a packet that attributes an incident to a
+commit that did not cause it, which is why `renderDiagnosisFor` takes a sha
+override. The pipeline never passes it; only capture does.
+
+### Two axes, and one deliberately absent
+
+| Axis | Question |
+|---|---|
+| judged a real cause correctly | of the cases the diff explains, how many were judged so |
+| rejected an innocent commit | of the cases it does not, how many were rejected |
+| fix names a file in the commit | mechanical grounding, over cases judged explained |
+
+Whether the mechanism is *right* and whether the fix is *good* are still not
+measured, and still for the reason §12 gives: both need a human or a second
+model marking the first one's homework. The prose is **printed for wrong
+answers** so a person can read it, and never scored.
+
+Fix grounding is scored only where naming a file is the right thing to do. On a
+case correctly judged unexplained there is no code change to propose, so
+requiring a filename would penalise the correct answer.
+
+### The result
+
+```
+                                  llama3.2 (3B)   stub (baseline)
+  judged a real cause correctly       1/2              0/2
+  rejected an innocent commit         3/3              3/3
+  fix names a file in the commit      0/1              n/a
+  confidence when right               0.40             0.10
+             when wrong               0.80             0.10
+```
+
+**The stub scores 0/2 and 3/3** by declining everything. Blended that is 60% and
+reads as respectable; split, the degenerate strategy is unmissable. Third time
+this scorecard shape has earned its keep.
+
+**The fix-grounding axis earned its place on its first run.** `llama3.2`
+correctly judged `limiter-guilty` as explained — and then proposed a fix naming
+no file the commit touched. A correct judgement with an unreviewable fix is
+exactly the outcome the two-axis split exists to separate, and a single accuracy
+number would have called that case a success.
+
+**Its confidence is inverted**: 0.80 when wrong, 0.40 when right. That is worse
+than uncalibrated, and worse than the flat 0.80 the same model produced on the
+correlation set — there, the number carried no information; here it carries
+misleading information.
+
+**The capable-model numbers are missing.** Both Gemini models' daily quota was
+spent building and capturing the set. That is a run away, not a design problem.
+
 ### What this does not establish
 
 Four cases and one application shape. The decline half is **2 cases** — the
@@ -1743,22 +1843,3 @@ answers, because the answer is as often a bad label as a bad model — two of th
 six classifier labels were found that way — but grading prose needs a human or a
 second model marking the first one's homework, and a number nobody should trust
 is worse than no number.
-
----
-
-## 15. Adding a correlation case
-
-1. Add the scenario to `SCENARIO_NAMES` and `SCENARIOS` in the generator with
-   `benign: false` — a benign scenario is dismissed by Tier 2 and never reaches
-   correlation.
-2. Give it evidence that links to a commit, or deliberately does not. The link
-   should be checkable, not given away: no sha in any log line.
-3. Verify it trips Tier 1 *and* that Tier 2 confirms it. If either fails, the
-   case tests nothing, and `capture-correlation-cases.sh` says so loudly.
-4. Add it to that script with `--sha <sha|none>` and a `--note` that argues for
-   the label.
-
-`--sha` is resolved against the candidates in the packet being captured, and
-capture fails if it matches none. A case expecting a commit its own evidence
-does not contain would score every model wrong forever and look like a model
-problem rather than a labelling one.

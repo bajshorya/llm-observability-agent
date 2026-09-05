@@ -45,6 +45,10 @@ import { renderContextForIncident } from "../correlation/correlate";
 import { resolveCandidateSha } from "../correlation/grounding";
 import { loadCorrelationCases, saveCorrelationCase, type CorrelationCase } from "./correlation-cases";
 import { runCorrelationEval } from "./run-correlation";
+import { renderDiagnosisFor } from "../correlation/../diagnosis/diagnose";
+import { loadDiagnosisCases, saveDiagnosisCase, type DiagnosisCase } from "./diagnosis-cases";
+import { runDiagnosisEval } from "./run-diagnosis";
+import type { DiagnosisCaseScore, DiagnosisSummary } from "./score-diagnosis";
 import { loadPinnedVerdict } from "./verdicts";
 import type { CorrelationCaseScore, CorrelationSummary } from "./score-correlation";
 import { severities, type Severity } from "@obs/shared";
@@ -68,6 +72,7 @@ Options:
   --show <name>       Print a case's evidence packet and exit
   --capture <name>    Save the newest anomaly as a golden case (see below)
   --correlation       Operate on the Phase 3 correlation set instead
+  --diagnosis         Operate on the Phase 4 diagnosis set instead
   -h, --help          Show this message
 
 Correlation mode (--correlation) takes the same --provider, --case, --list and
@@ -391,6 +396,171 @@ async function runCorrelationMode(
   if (wrong > 0 || run.failures.length > 0) process.exitCode = 1;
 }
 
+/**
+ * Capture a diagnosis case.
+ *
+ * `--sha` attributes the incident to a specific commit, which is how the
+ * "does not explain" half of the set is built: the same symptoms, handed to a
+ * commit that plainly could not have caused them. Without those pairs the set
+ * cannot tell a model reading the diff from one agreeing with its input.
+ */
+async function captureDiagnosis(
+  values: Record<string, string | boolean | undefined>,
+): Promise<void> {
+  const name = values["capture"] as string;
+  const explains = values["explains"];
+
+  if (explains !== "yes" && explains !== "no") {
+    throw new Error(`--explains must be "yes" or "no"`);
+  }
+
+  const rendered = await renderDiagnosisFor(
+    undefined,
+    {},
+    values["sha"] as string | undefined,
+  );
+
+  if (!rendered) {
+    throw new Error(
+      "No correlated incident found, or that sha is not in the target repository. " +
+        "Run `pnpm detect`, `pnpm classify` and `pnpm correlate` first.",
+    );
+  }
+
+  const golden: DiagnosisCase = {
+    name,
+    scenario: (values["scenario"] as string | undefined) ?? name,
+    capturedAt: new Date().toISOString(),
+    sha: rendered.sha,
+    expect: {
+      explainsTheFailure: explains === "yes",
+      note: (values["note"] as string | undefined) ?? "",
+    },
+    commitFiles: rendered.commitFiles,
+    context: rendered.context,
+  };
+
+  const path = saveDiagnosisCase(golden);
+  console.log(`Captured diagnosis case "${name}" from anomaly ${rendered.anomalyId.slice(0, 8)}`);
+  console.log(`  commit ${rendered.sha.slice(0, 10)}, expect explains=${explains}`);
+  console.log(`  ${golden.context.split("\n").length} lines of evidence -> ${path}`);
+}
+
+function reportDiagnosisCase(score: DiagnosisCaseScore): void {
+  const mark = score.judgementCorrect ? "ok  " : "WRONG";
+  const said = score.actual.explainsTheFailure ? "explains" : "does not explain";
+  const want = score.expected.explainsTheFailure ? "explains" : "does not explain";
+
+  console.log(
+    `  ${mark} ${score.name.padEnd(22)} said ${said.padEnd(17)} want ${want.padEnd(17)} ` +
+      `conf ${score.actual.confidence.toFixed(2)}`,
+  );
+
+  if (score.fixGrounded === false) {
+    console.log(`       the fix names no file this commit touched`);
+  }
+
+  // Printed for wrong answers only, and never scored. The answer is as often a
+  // bad label as a bad model.
+  if (!score.judgementCorrect) {
+    console.log(`       cause: ${score.actual.rootCause}`);
+    console.log(`       label: ${score.expected.note}`);
+  }
+}
+
+function reportDiagnosisSummary(summary: DiagnosisSummary): void {
+  const pct = (c: number, t: number): string =>
+    t === 0 ? "  n/a" : `${Math.round((c / t) * 100)}%`.padStart(5);
+  const conf = (v: number | null): string => (v === null ? "n/a" : v.toFixed(2));
+
+  console.log("");
+  console.log("Scorecard:");
+  console.log(
+    `  judged a real cause correctly   ${summary.explains.correct}/${summary.explains.total}  ` +
+      `${pct(summary.explains.correct, summary.explains.total)}`,
+  );
+  console.log(
+    `  rejected an innocent commit     ${summary.rejects.correct}/${summary.rejects.total}  ` +
+      `${pct(summary.rejects.correct, summary.rejects.total)}`,
+  );
+  console.log(
+    `  fix names a file in the commit  ${summary.fixesGrounded.correct}/${summary.fixesGrounded.total}  ` +
+      `${pct(summary.fixesGrounded.correct, summary.fixesGrounded.total)}`,
+  );
+  console.log(
+    `  confidence when right           ${conf(summary.confidence.whenCorrect)}   ` +
+      `when wrong ${conf(summary.confidence.whenWrong)}`,
+  );
+
+  if (summary.failures > 0) console.log(`  no valid answer                 ${summary.failures}`);
+
+  console.log(
+    `  cost                            ${summary.totalInputTokens} in / ${summary.totalOutputTokens} out, ` +
+      `${summary.totalRepairs} repair(s), mean ${summary.meanLatencyMs}ms`,
+  );
+  console.log("");
+  console.log("The two accuracy rows are never averaged. A model that agrees with every");
+  console.log("attribution scores 100% on the first and 0% on the second; one that rejects");
+  console.log("everything scores the reverse. Prose quality is deliberately not scored.");
+}
+
+async function runDiagnosisMode(
+  values: Record<string, string | boolean | undefined>,
+): Promise<void> {
+  if (values["list"]) {
+    const cases = loadDiagnosisCases();
+    console.log(`${cases.length} diagnosis case(s):`);
+    for (const golden of cases) {
+      const want = golden.expect.explainsTheFailure ? "explains        " : "does not explain";
+      console.log(`  ${golden.name.padEnd(22)} ${want}  ${golden.expect.note}`);
+    }
+    return;
+  }
+
+  if (typeof values["show"] === "string") {
+    const [golden] = loadDiagnosisCases(values["show"]);
+    console.log(golden ? golden.context : `No diagnosis case named "${values["show"]}"`);
+    return;
+  }
+
+  const named = values["case"] as string | undefined;
+  const cases = loadDiagnosisCases(named);
+
+  if (cases.length === 0) {
+    console.log(
+      named
+        ? `No diagnosis case named "${named}". Run --diagnosis --list to see the set.`
+        : "The diagnosis golden set is empty. Capture one with:\n" +
+            "  pnpm eval --diagnosis --capture <name> --explains yes|no --note '...'",
+    );
+    return;
+  }
+
+  const providerName = values["provider"] as LlmProviderName | undefined;
+  if (providerName && !llmProviderNames.includes(providerName)) {
+    throw new Error(`Unknown provider "${providerName}".`);
+  }
+
+  const provider = providerName ? createProvider(providerName) : createProvider();
+  console.log(
+    `Evaluating ${cases.length} diagnosis case(s) against ${provider.name} (${provider.model}):\n`,
+  );
+
+  const run = await runDiagnosisEval(provider, cases, reportDiagnosisCase);
+
+  for (const failure of run.failures) {
+    console.log(`  FAIL ${failure.name.padEnd(22)} no valid answer — ${failure.error}`);
+  }
+
+  reportDiagnosisSummary(run.summary);
+
+  const wrong =
+    run.summary.explains.total - run.summary.explains.correct +
+    (run.summary.rejects.total - run.summary.rejects.correct);
+
+  if (wrong > 0 || run.failures.length > 0) process.exitCode = 1;
+}
+
 async function capture(values: Record<string, string | boolean | undefined>): Promise<void> {
   const name = values["capture"] as string;
   const expect = values["expect"];
@@ -435,6 +605,8 @@ async function main(): Promise<void> {
       scenario: { type: "string" },
       note: { type: "string" },
       correlation: { type: "boolean" },
+      diagnosis: { type: "boolean" },
+      explains: { type: "string" },
       sha: { type: "string" },
       files: { type: "string" },
       diff: { type: "boolean" },
@@ -444,6 +616,16 @@ async function main(): Promise<void> {
 
   if (values.help) {
     console.log(USAGE);
+    return;
+  }
+
+  // `--diagnosis` switches the whole command to the Phase 4 set.
+  if (values.diagnosis) {
+    if (values.capture) {
+      await captureDiagnosis(values);
+      return;
+    }
+    await runDiagnosisMode(values);
     return;
   }
 

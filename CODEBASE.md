@@ -168,7 +168,7 @@ checkable, not just claimed.
 In every module, the code that *decides* has no database, clock, or network:
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `json.ts`,
 `grounding.ts`, `score.ts`. The code that *persists* is separate: `engine.ts`,
-`rollup.ts`, `classify.ts`, `calls.ts`. This is why 177 tests run in ~300 ms with
+`rollup.ts`, `classify.ts`, `calls.ts`. This is why 197 tests run in ~300 ms with
 no fixtures. **When hunting for logic, it is in a pure file.**
 
 **3 · Everything crossing a boundary is validated with Zod.**
@@ -718,6 +718,17 @@ would score a hallucination as "the provider errored".
 
 **`cases/*.json`** — six captured cases, three incidents and three benign.
 
+**`diagnosis-cases.ts` / `score-diagnosis.ts` / `run-diagnosis.ts`** — the
+Phase 4 set. Five cases built in **pairs**: the same incident attributed once to
+the commit that caused it and once to one that plainly could not have. That
+pairing is what separates a model reading the diff from one agreeing with
+whatever it was handed — without it, both score identically.
+
+Two axes, never averaged: judged a real cause correctly, and rejected an
+innocent commit. Plus a mechanical check that the proposed fix names a file the
+commit actually touched, scored only where naming a file is the right answer.
+Prose quality is printed for wrong answers and never scored.
+
 **`correlation-cases/*.json`** — two arms, stored side by side and never
 blended: six default cases and six `diff-` prefixed ones carrying the same
 incidents with unified diffs. `loadCorrelationCases` returns one arm or the
@@ -1056,7 +1067,7 @@ Code-level tunables live in `detection/config.ts` (thresholds),
 pnpm install && pnpm db:push        # setup
 pnpm backend                        # ingestion API on :4000
 pnpm typecheck                      # strict TS, all packages
-pnpm test                           # 177 unit tests, ~300ms, no network
+pnpm test                           # 197 unit tests, ~300ms, no network
 
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -1085,6 +1096,10 @@ pnpm diagnose --stats               # the funnel, and the applied count
 pnpm eval --show <name>             # a case's evidence packet
 pnpm eval --correlation             # score the correlation set
 pnpm eval --correlation --list      # the correlation set and its labels
+pnpm eval --diagnosis               # score the Phase 4 set (5 paired cases)
+
+bash scripts/demo.sh                # the whole pipeline, one command, offline
+bash scripts/demo.sh gemini         # ...with a real model
 
 bash scripts/build-fixture-repo.sh  # the repo Phase 3 correlates against
 bash scripts/build-fixture-repo.sh --anchor now   # for a live demo; different shas
@@ -1092,7 +1107,7 @@ bash scripts/build-fixture-repo.sh --anchor now   # for a live demo; different s
 
 ## 18. Testing strategy
 
-Thirteen test files, 177 tests, ~300 ms, no network or database.
+Fifteen test files, 197 tests, ~300 ms, no network or database.
 
 | File | Covers |
 |---|---|
@@ -1109,6 +1124,8 @@ Thirteen test files, 177 tests, ~300 ms, no network or database.
 | `eval/verdicts.test.ts` | Pinned verdicts parse, cover every case's scenario, and match what the stored packets contain |
 | `diagnosis/context.test.ts` | The diff is always present and never truncated; an unreadable one says so |
 | `diagnosis/prompt.test.ts` | Prompt discipline, and that the model is told it may disagree |
+| `eval/score-diagnosis.test.ts` | The two judgement axes never averaged; fix grounding scored only where a filename is the right answer |
+| `eval/correlation-cases.test.ts` | The two hunk arms stay apart; an unknown name returns nothing |
 
 Two conventions worth knowing. Tests run against the **real config objects**, not
 fixtures, so changing a threshold fails a test rather than silently altering
@@ -1219,20 +1236,22 @@ and an add.
 | 4 | Root-cause + fix agent, human-gated | ✅ **Done** — reads the blamed commit's diff, may disagree with it, never applies anything |
 | 5 | Next.js dashboard with reasoning trace | ✅ **Done** — timeline and per-anomaly reasoning trace, read-only |
 
-**Every phase is built.** What is open is measurement, not code:
+**Every phase is built, every stage has an eval, and `bash scripts/demo.sh`
+runs the whole pipeline offline in one command.** What is open is measurement
+that needs free-tier quota, plus one decision:
 
-- **No eval for Phase 4.** Harder than the two before it — "is this mechanism
-  right" and "is this fix good" are not boolean, and grading prose needs a human
-  or a second model marking the first one's homework. See
-  `DOCUMENTATION-PHASE-4.md` §10.
-- **One correlation measurement outstanding:** `gemini-3.5-flash` on the current
-  capture, both hunk arms. It is the model that regressed in the earlier A/B, so
-  it decides whether `CORRELATION_DIFFS` should default on.
+- **Capable-model numbers for the Phase 4 eval.** The set exists and scores
+  `llama3.2` and the stub; both Gemini models' daily quota went on building and
+  capturing it. One run away. `DOCUMENTATION-EVALS.md` §16.
+- **`gemini-3.5-flash` on the current correlation capture, both hunk arms.** It
+  is the model that regressed in the earlier A/B, so it decides whether
+  `CORRELATION_DIFFS` should default on.
 - **Verdict pins are mixed provenance** — five from `gemini-3.5-flash`, one from
   `gemini-2.5-flash`, because quota ran out mid-work. Re-pinning uniformly is
-  worth doing.
-- **The `deploy-restart` sha decision** is still open. It now affects only the
-  classifier golden set. `DOCUMENTATION-PHASE-3.md` §13.
+  worth doing and changes no behaviour.
+- **The `deploy-restart` sha decision.** It now affects only the classifier
+  golden set, and acting on it costs a full re-capture.
+  `DOCUMENTATION-PHASE-3.md` §13.
 
 Phase 3's blocking decision is settled: correlation runs against a real git
 repository built by `scripts/build-fixture-repo.sh` and gitignored, rather than
