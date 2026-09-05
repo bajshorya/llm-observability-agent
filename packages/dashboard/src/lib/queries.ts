@@ -24,7 +24,7 @@
 
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@obs/backend/src/db/client";
-import { anomalies, correlations, llmCalls, logs } from "@obs/backend/src/db/schema";
+import { anomalies, correlations, hypotheses, llmCalls, logs } from "@obs/backend/src/db/schema";
 import type { AnomalyStatus, AnomalyTrigger, Severity } from "@obs/shared";
 
 export interface AnomalyRow {
@@ -46,6 +46,16 @@ export interface CorrelationRow {
   confidence: number;
   reasoning: string;
   implicatedFiles: string[];
+  createdAt: Date;
+}
+
+export interface HypothesisRow {
+  explainsTheFailure: boolean;
+  rootCause: string;
+  suggestedFix: string;
+  confidence: number;
+  /** Always false. The agent diagnoses; a human decides. */
+  applied: boolean;
   createdAt: Date;
 }
 
@@ -106,6 +116,24 @@ export async function getCorrelation(anomalyId: string): Promise<CorrelationRow 
   return (row as CorrelationRow | undefined) ?? null;
 }
 
+export async function getHypothesis(anomalyId: string): Promise<HypothesisRow | null> {
+  const [row] = await db
+    .select({
+      explainsTheFailure: hypotheses.explainsTheFailure,
+      rootCause: hypotheses.rootCause,
+      suggestedFix: hypotheses.suggestedFix,
+      confidence: hypotheses.confidence,
+      applied: hypotheses.applied,
+      createdAt: hypotheses.createdAt,
+    })
+    .from(hypotheses)
+    .where(eq(hypotheses.anomalyId, anomalyId))
+    .orderBy(desc(hypotheses.createdAt))
+    .limit(1);
+
+  return (row as HypothesisRow | undefined) ?? null;
+}
+
 /**
  * Every model call made about this anomaly, oldest first.
  *
@@ -139,6 +167,7 @@ export interface Funnel {
   dismissed: number;
   correlated: number;
   attributed: number;
+  diagnosed: number;
 }
 
 /**
@@ -165,6 +194,8 @@ export async function getFunnel(): Promise<Funnel> {
     })
     .from(correlations);
 
+  const [diagnosed] = await db.select({ n: sql<number>`count(*)` }).from(hypotheses);
+
   return {
     anomalies: counts?.anomalies ?? 0,
     classified: counts?.classified ?? 0,
@@ -172,6 +203,7 @@ export async function getFunnel(): Promise<Funnel> {
     dismissed: counts?.dismissed ?? 0,
     correlated: correlated?.correlated ?? 0,
     attributed: correlated?.attributed ?? 0,
+    diagnosed: diagnosed?.n ?? 0,
   };
 }
 

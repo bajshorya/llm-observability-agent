@@ -50,6 +50,11 @@ export default async function TimelinePage() {
           <div className="k">Correlated</div>
           <div className="note">{funnel.attributed} named a commit</div>
         </div>
+        <div className="step">
+          <div className="n">{funnel.diagnosed}</div>
+          <div className="k">Diagnosed</div>
+          <div className="note">0 applied — human gate</div>
+        </div>
       </section>
 
       {rows.length === 0 ? (
