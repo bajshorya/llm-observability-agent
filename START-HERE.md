@@ -39,9 +39,14 @@ propose a fix.
                                     └── benign   ──▶ dismissed
                                             │
                                             ▼
-        TIER 3  commit correlation                 in progress
+        TIER 3  commit correlation
         which commit did this, or none?
         2/2 attribution · 2/4 declining (4/4 with hunks) · baseline 0/2, 0/4
+                                    │ only what named a commit
+                                    ▼
+        TIER 4  root cause                         reads the diff
+        why did it break, and what should change?
+        may disagree with Tier 3 · nothing is ever applied
 ```
 
 The funnel is the whole point. Tier 1 is free and can run every 30 seconds.
@@ -66,7 +71,7 @@ why the default provider is an offline stub.
 In every module, the logic that decides things has no database, clock, or I/O —
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `grounding.ts`. The
 code that touches the database is separate — `engine.ts`, `rollup.ts`,
-`classify.ts`, `calls.ts`. That split is why 162 tests run in 300ms with no
+`classify.ts`, `calls.ts`. That split is why 177 tests run in 300ms with no
 fixtures — including a `git log` parser tested entirely on strings, with no
 repository anywhere near it. **When you are hunting for logic, it is in a pure file.**
 
@@ -130,6 +135,8 @@ packages/backend/src/
                         git.ts spawns it · context.ts builds the packet ·
                         prompt.ts is the prompt · grounding.ts checks the answer
                         against the evidence · correlate.ts orchestrates
+  diagnosis/            Phase 4. context.ts is the packet (pure, diff always
+                        included) · prompt.ts · diagnose.ts orchestrates
   eval/                 Golden set: cases/, grounding.ts, score.ts
 
 packages/dashboard/     Phase 5. Next.js, read-only. app/page.tsx is the
@@ -188,7 +195,7 @@ want the extended reasoning behind a particular decision.
 
 ## The reading order
 
-Ten documents, about three hours if you read them all. You don't need
+Eleven documents, about three hours if you read them all. You don't need
 to. **An hour in this order and you understand the system**; the rest
 becomes lookup.
 
@@ -209,6 +216,7 @@ question, not reading you owe.
 | The LLM layer in depth; adding a provider | `PHASE-2` §4–8 |
 | How evaluation works and what it found | `EVALS` — whole document |
 | Commit correlation and the fixture repository | `PHASE-3` — whole document |
+| Root cause, and why the diff is mandatory | `PHASE-4` — whole document |
 | The dashboard, and why it is read-only | `PHASE-5` — whole document |
 | Ingestion, schemas and the generator in detail | `DOCUMENTATION` §6–8 |
 
@@ -223,6 +231,7 @@ pnpm detect                                    # → ANOMALY, two triggers fired
 pnpm classify --preview <anomaly-id>           # ← the single most useful command
 pnpm classify                                  # a verdict, and status moves
 pnpm correlate --preview                       # the correlation packet
+pnpm diagnose --preview                        # the root-cause prompt
 pnpm dashboard                                 # ← then open localhost:3000
 ```
 

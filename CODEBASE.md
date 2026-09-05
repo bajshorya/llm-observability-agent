@@ -35,8 +35,9 @@ the code win.
 [12. backend: llm](#12-backend--llm) ·
 [13. backend: classification](#13-backend--classification-tier-2) ·
 [14. backend: eval](#14-backend--eval) ·
-[14a. backend: correlation](#14a-backend--correlation-phase-3-partial) ·
-[14b. dashboard](#14b-packagesdashboard-phase-5)
+[14a. backend: correlation](#14a-backend--correlation-phase-3) ·
+[14b. backend: diagnosis](#14b-backend--diagnosis-phase-4) ·
+[14c. dashboard](#14c-packagesdashboard-phase-5)
 
 **Part IV — Reference**
 [15. Algorithms](#15-the-algorithms) ·
@@ -44,7 +45,7 @@ the code win.
 [17. Commands](#17-commands) ·
 [18. Testing](#18-testing-strategy) ·
 [19. Limitations](#19-known-limitations) ·
-[20. Not built](#20-what-is-not-built)
+[20. Phase status](#20-phase-status-and-what-is-still-open)
 
 ---
 
@@ -167,7 +168,7 @@ checkable, not just claimed.
 In every module, the code that *decides* has no database, clock, or network:
 `detectors.ts`, `stats.ts`, `context.ts`, `structured.ts`, `json.ts`,
 `grounding.ts`, `score.ts`. The code that *persists* is separate: `engine.ts`,
-`rollup.ts`, `classify.ts`, `calls.ts`. This is why 162 tests run in ~300 ms with
+`rollup.ts`, `classify.ts`, `calls.ts`. This is why 177 tests run in ~300 ms with
 no fixtures. **When hunting for logic, it is in a pure file.**
 
 **3 · Everything crossing a boundary is validated with Zod.**
@@ -737,7 +738,7 @@ real pipeline runs against scratch databases under `.tmp/`. Required whenever th
 evidence packet changes, since a stored case is a fixed artefact of the renderer
 that produced it.
 
-## 14a. Backend — correlation (Phase 3, partial)
+## 14a. Backend — correlation (Phase 3)
 
 The first stage that reads a second data source. Everything before it looks at
 what the service did; this puts that next to source history. Complete and
@@ -879,7 +880,49 @@ answer measures nothing. Detailed in `PHASE-3` §3.
 
 ---
 
-## 14b. `packages/dashboard` (Phase 5)
+## 14b. Backend — diagnosis (Phase 4)
+
+The last stage, and the only one that writes something a human might act on.
+
+**`context.ts`** (164 lines) — the evidence packet, **pure**. Three things in
+causal order: the symptom, the attribution (including the correlator's own
+reasoning verbatim, so this stage does not silently re-derive it), and the
+change — the blamed commit with its **full diff**.
+
+The diff is mandatory here rather than a trade. Correlation treats hunks as a
+measured switch because they help a capable model and degrade a weak one; this
+stage cannot answer "what should change" from a line count. It is also the only
+packet with **no budget on its largest section**: a root cause found in the
+truncated half is a root cause missed, and this runs on one commit at most. An
+unreadable diff says `UNAVAILABLE` rather than rendering empty, which would read
+as "this commit changed nothing".
+
+**`prompt.ts`** (121 lines) — `ROOT_CAUSE_SYSTEM_PROMPT`. Built around three
+failures: a fix that cannot be checked ("add error handling"), agreeing by
+default with the attribution it was handed, and restating the error text instead
+of explaining the mechanism. Requires the fix to name file and function, because
+a reviewer reads it with the diff open. States that nothing is applied, which
+changes what a model writes.
+
+**`diagnose.ts`** (316 lines) — orchestration. Pending is an attributed incident
+with no hypothesis: keyed off the absence of a row, like both stages before it.
+Re-fetches the commit by sha via `commitBySha` rather than re-deriving it from a
+lookback, so a sha that has since been rewritten fails loudly. `applied` is never
+written.
+
+`diagnosisFunnel` reports `unexplained` separately — a stage that never disagrees
+with its input is one that is not adding a judgement, and this is the only place
+that would be visible.
+
+**`cli.ts`** (176 lines) — `pnpm diagnose`, with `--limit`, `--anomaly`,
+`--provider`, `--preview`, `--repo` and `--stats`. There is no `--apply`. Output
+leads with whether the diff explained the failure at all, because a hypothesis
+that disagrees with its correlation is the most interesting thing this stage
+produces.
+
+---
+
+## 14c. `packages/dashboard` (Phase 5)
 
 A Next.js app, read-only, reading the same SQLite file the CLIs write. Two
 pages: a timeline and a per-anomaly reasoning trace.
@@ -1007,7 +1050,7 @@ Code-level tunables live in `detection/config.ts` (thresholds),
 pnpm install && pnpm db:push        # setup
 pnpm backend                        # ingestion API on :4000
 pnpm typecheck                      # strict TS, all packages
-pnpm test                           # 162 unit tests, ~300ms, no network
+pnpm test                           # 177 unit tests, ~300ms, no network
 
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -1029,6 +1072,10 @@ pnpm correlate --preview            # the exact prompt, no call
 pnpm correlate --provider stub      # the naive "blame the newest" baseline
 pnpm correlate --stats              # the correlation funnel
 
+pnpm diagnose                       # Phase 4 — root cause and suggested fix
+pnpm diagnose --preview             # the exact prompt, no call
+pnpm diagnose --stats               # the funnel, and the applied count
+
 pnpm eval --show <name>             # a case's evidence packet
 pnpm eval --correlation             # score the correlation set
 pnpm eval --correlation --list      # the correlation set and its labels
@@ -1039,7 +1086,7 @@ bash scripts/build-fixture-repo.sh --anchor now   # for a live demo; different s
 
 ## 18. Testing strategy
 
-Eleven test files, 162 tests, ~300 ms, no network or database.
+Thirteen test files, 177 tests, ~300 ms, no network or database.
 
 | File | Covers |
 |---|---|
@@ -1054,6 +1101,8 @@ Eleven test files, 162 tests, ~300 ms, no network or database.
 | `correlation/grounding.test.ts` | Sha resolution, invented shas rejected, invented files dropped |
 | `eval/score-correlation.test.ts` | The four axes: attribution and declining never averaged, files scored only where applicable |
 | `eval/verdicts.test.ts` | Pinned verdicts parse, cover every case's scenario, and match what the stored packets contain |
+| `diagnosis/context.test.ts` | The diff is always present and never truncated; an unreadable one says so |
+| `diagnosis/prompt.test.ts` | Prompt discipline, and that the model is told it may disagree |
 
 Two conventions worth knowing. Tests run against the **real config objects**, not
 fixtures, so changing a threshold fails a test rather than silently altering
@@ -1156,13 +1205,28 @@ bodies and per-file line counts — not hunks — so a bug visible only in the d
 is invisible to the agent. `--no-renames` means a moved file looks like a delete
 and an add.
 
-## 20. What is not built
+## 20. Phase status, and what is still open
 
 | Phase | Scope | State |
 |---|---|---|
-| 3 | Commit correlation | ✅ **Done and measured** on a six-case set — 2/2 attribution and 4/4 declining on `gemini-2.5-flash`, against a 0/2 and 0/4 baseline. Re-scoring pending after the determinism re-capture; see §19 |
-| 4 | Root-cause + fix agent, human-gated | Schema and contract exist; no code |
+| 3 | Commit correlation | ✅ **Done and measured** on a six-case set — 2/2 attribution and 2/4 declining on `gemini-2.5-flash` (4/4 with hunks), against a 0/2 and 0/4 baseline |
+| 4 | Root-cause + fix agent, human-gated | ✅ **Done** — reads the blamed commit's diff, may disagree with it, never applies anything |
 | 5 | Next.js dashboard with reasoning trace | ✅ **Done** — timeline and per-anomaly reasoning trace, read-only |
+
+**Every phase is built.** What is open is measurement, not code:
+
+- **No eval for Phase 4.** Harder than the two before it — "is this mechanism
+  right" and "is this fix good" are not boolean, and grading prose needs a human
+  or a second model marking the first one's homework. See
+  `DOCUMENTATION-PHASE-4.md` §10.
+- **One correlation measurement outstanding:** `gemini-3.5-flash` on the current
+  capture, both hunk arms. It is the model that regressed in the earlier A/B, so
+  it decides whether `CORRELATION_DIFFS` should default on.
+- **Verdict pins are mixed provenance** — five from `gemini-3.5-flash`, one from
+  `gemini-2.5-flash`, because quota ran out mid-work. Re-pinning uniformly is
+  worth doing.
+- **The `deploy-restart` sha decision** is still open. It now affects only the
+  classifier golden set. `DOCUMENTATION-PHASE-3.md` §13.
 
 Phase 3's blocking decision is settled: correlation runs against a real git
 repository built by `scripts/build-fixture-repo.sh` and gitignored, rather than

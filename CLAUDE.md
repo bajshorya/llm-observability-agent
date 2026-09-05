@@ -23,6 +23,7 @@ correlation, evals), `dashboard` (Next.js, read-only).
 | Why a threshold is what it is | `DOCUMENTATION-PHASE-1.md` |
 | The LLM layer in depth | `DOCUMENTATION-PHASE-2.md` |
 | Commit correlation, and the fixture repo | `DOCUMENTATION-PHASE-3.md` |
+| Root cause, and why the diff is mandatory there | `DOCUMENTATION-PHASE-4.md` |
 | The dashboard and its reasoning trace | `DOCUMENTATION-PHASE-5.md` |
 | How evaluation works and what it found | `DOCUMENTATION-EVALS.md` |
 
@@ -45,10 +46,13 @@ declines for four different reasons). `gemini-2.5-flash` scores 2/2 and 4/4;
 three repeats with zero decision flips, and captures are now deterministic too,
 so results compare across runs. `DOCUMENTATION-EVALS.md` §14.
 
-Phase 5 (dashboard) is **done**: a Next.js app at `packages/dashboard` with a
-timeline and a per-anomaly reasoning trace. It reads the database directly and
-is entirely read-only. Phase 4 (root-cause agent) is not built — schema and Zod
-contract exist, no code.
+Phase 4 (root cause) and Phase 5 (dashboard) are **done**. `pnpm diagnose` reads
+the blamed commit's diff and produces a hypothesis plus a suggested fix, gated
+behind `applied = false`. The dashboard is a Next.js app with a timeline and a
+per-anomaly reasoning trace, read-only.
+
+**Every phase is now built.** What is missing is an eval for Phase 4 — see
+`DOCUMENTATION-PHASE-4.md` §10 for why it is harder than the two before it.
 
 The two-tier claim is **measured, not asserted**: on `gemini-3.5-flash` the
 golden set scores 6/6 on every axis, stably; the statistical baseline scores 0/3
@@ -57,7 +61,7 @@ on the benign half. See `DOCUMENTATION-EVALS.md` §10.
 ## Commands
 
 ```bash
-pnpm typecheck && pnpm test        # 162 tests, ~300ms, no network
+pnpm typecheck && pnpm test        # 177 tests, ~300ms, no network
 pnpm backend                       # ingestion API on :4000
 pnpm generate backfill --minutes 120
 pnpm generate inject --scenario deploy-restart --minutes 5
@@ -73,6 +77,8 @@ LLM_TEMPERATURE=0 pnpm eval --correlation          # for repeatability runs
 
 bash scripts/build-fixture-repo.sh # the repo Phase 3 correlates against
 
+pnpm diagnose                      # Phase 4 — why it broke, and what to change
+pnpm diagnose --preview            # the exact prompt, calls nothing
 pnpm dashboard                     # localhost:3000, reads DATABASE_URL
 ```
 
@@ -89,6 +95,12 @@ own persistence. Keep it that way — it is why the tests need no fixtures.
 
 **Every boundary is validated with Zod.** Nothing downstream consumes
 unvalidated data, model output included.
+
+**Nothing applies a suggested fix, and nothing should.** `hypotheses.applied`
+defaults to false and no code in this repository writes it — no `--apply` flag,
+no dashboard button, no code path. `pnpm diagnose --stats` prints that count
+alongside a note that it is expected to stay zero. If it moves, something was
+added that should have been argued about first.
 
 **The dashboard is read-only, and must stay that way.** No button classifies,
 correlates or re-runs anything. Each of those spends quota, and a button is one
