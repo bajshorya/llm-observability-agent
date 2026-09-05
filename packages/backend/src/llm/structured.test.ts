@@ -264,18 +264,43 @@ describe("stub provider", () => {
     expect(value.summary.toLowerCase()).toContain("stub");
   });
 
-  it("refuses agents it has no canned answer for", () => {
-    // `correlator` was this test's example until Phase 3 gave the stub a
-    // correlation baseline. `root_cause` is the remaining unimplemented agent.
+  it("refuses an agent it has no canned answer for", () => {
+    // All three declared agents now have one — `correlator` was this test's
+    // example until Phase 3, `root_cause` until Phase 4. The guard still
+    // matters: it is what makes a fourth agent fail loudly at the stub rather
+    // than reaching a provider with a prompt nothing knows how to answer. The
+    // cast is deliberate, since the type no longer admits an unhandled name.
     expect(() =>
       createStubProvider().complete({
         system: "s",
         user: "u",
-        agent: "root_cause",
+        agent: "remediator" as unknown as "classifier",
         temperature: 0,
         maxOutputTokens: 100,
       }),
     ).toThrow(LlmProviderError);
+  });
+
+  it("declines to diagnose rather than inventing a baseline", async () => {
+    // Deliberately not a baseline. Classification has a statistical one worth
+    // beating and correlation a heuristic one; deriving a mechanism from a
+    // diff has no cheap non-model equivalent, so a stub attempt would be a
+    // straw man rather than a control.
+    const completion = await createStubProvider().complete({
+      system: "s",
+      user: "u",
+      agent: "root_cause",
+      temperature: 0,
+      maxOutputTokens: 400,
+    });
+
+    const value = JSON.parse(completion.text) as {
+      explainsTheFailure: boolean;
+      rootCause: string;
+    };
+
+    expect(value.explainsTheFailure).toBe(false);
+    expect(value.rootCause.toLowerCase()).toContain("no model was called");
   });
 
   /**
