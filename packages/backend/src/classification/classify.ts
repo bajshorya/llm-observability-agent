@@ -475,6 +475,19 @@ export async function classifyAnomalies(
   return { provider: provider.name, model: provider.model, outcomes };
 }
 
+/**
+ * How many anomalies exist at all.
+ *
+ * Used only to tell two empty results apart. "Nothing to classify" has two
+ * causes — every anomaly already has a verdict, or there are no anomalies —
+ * and reporting the first when the second is true sends someone looking for a
+ * bug in Tier 2 when what they actually need is `pnpm detect`.
+ */
+export async function anomalyCount(): Promise<number> {
+  const [row] = await db.select({ n: sql<number>`count(*)` }).from(anomalies);
+  return row?.n ?? 0;
+}
+
 export interface ClassificationFunnel {
   anomalies: number;
   classified: number;

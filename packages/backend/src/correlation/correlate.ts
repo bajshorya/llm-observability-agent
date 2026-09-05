@@ -310,6 +310,22 @@ export async function correlateAnomalies(
   return { provider: provider.name, model: provider.model, outcomes };
 }
 
+/**
+ * How many real incidents exist at all.
+ *
+ * Same purpose as `anomalyCount` one tier up: "nothing to correlate" has two
+ * causes, and reporting the wrong one points someone at this stage when the
+ * work they are missing belongs to Tier 2 — or when Tier 2 correctly dismissed
+ * everything, which is not a problem at all.
+ */
+export async function realIncidentCount(): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(anomalies)
+    .where(eq(anomalies.isRealIncident, true));
+  return row?.n ?? 0;
+}
+
 export interface CorrelationFunnel {
   realIncidents: number;
   correlated: number;

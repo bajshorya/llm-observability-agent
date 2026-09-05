@@ -348,11 +348,19 @@ async function runCorrelationMode(
     return;
   }
 
-  const cases = loadCorrelationCases(values["case"] as string | undefined, arm);
+  const named = values["case"] as string | undefined;
+  const cases = loadCorrelationCases(named, arm);
+
   if (cases.length === 0) {
+    // A named case that does not exist and an empty set are different
+    // problems. The classifier path has always distinguished them; this one
+    // reported both as "the set is empty", which sends someone to capture
+    // cases they already have.
     console.log(
-      "The correlation golden set is empty. Capture one with:\n" +
-        "  pnpm eval --correlation --capture <name> --sha <sha|none> --note '...'",
+      named
+        ? `No correlation case named "${named}". Run --correlation --list to see the set.`
+        : "The correlation golden set is empty. Capture one with:\n" +
+            "  pnpm eval --correlation --capture <name> --sha <sha|none> --note '...'",
     );
     return;
   }

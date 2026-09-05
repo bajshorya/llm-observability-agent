@@ -59,6 +59,7 @@ import {
   correlateAnomalies,
   correlationFunnel,
   previewCorrelationPrompt,
+  realIncidentCount,
   type CorrelationOutcome,
 } from "./correlate";
 import { defaultLookback } from "./git";
@@ -220,7 +221,13 @@ async function main(): Promise<void> {
   console.log(`Provider: ${result.provider} (${result.model})`);
 
   if (result.outcomes.length === 0) {
-    console.log("  nothing to correlate — every real incident already has a correlation");
+    const total = await realIncidentCount();
+    console.log(
+      total === 0
+        ? "  nothing to correlate — no confirmed incidents yet. Run `pnpm classify`, " +
+            "or Tier 2 dismissed every window as benign, which is a result rather than a gap."
+        : "  nothing to correlate — every real incident already has a correlation",
+    );
     return;
   }
 
