@@ -1,0 +1,14 @@
+{
+  "name": "new-error-docs",
+  "scenario": "new-error",
+  "capturedAt": "2026-09-05T03:22:21.732Z",
+  "sha": "465f015d0c89df00ea24207798f6d9942469da44",
+  "expect": {
+    "explainsTheFailure": false,
+    "note": "A README change. No executable code, so it cannot produce a runtime failure"
+  },
+  "commitFiles": [
+    "README.md"
+  ],
+  "context": "Service: orders-api\nWindow: 2026-08-16T18:57:00.000Z to 2026-08-16T19:02:00.000Z (5 min)\nSeverity: critical\nAffected area: orders-api\n\nWhat the classification stage concluded:\n  Stub classification for orders-api: 2 Tier 1 signal(s) fired (error_rate_spike, new_error_signature). Severity is scored from which detectors tripped — no model was called. Set LLM_PROVIDER to classify for real.\n\nWhat the detectors found:\n- error_rate_spike: 335 errors in the window against a baseline of 0.53/min (sd 0.79, z=84.01)\n- new_error_signature: \"TypeError: Cannot read properties of null (reading <str>)\" occurred 333 times and appears nowhere in the baseline hour\n    raw example: TypeError: Cannot read properties of null (reading 'toFixed')\n\nWhat the correlation stage concluded:\n  Commit 465f015d0c (confidence 0.25)\n  Files implicated: (none named)\n  Reasoning: Stub correlation: this is simply the most recent commit in the candidate list — the naive 'blame the last deploy' heuristic, applied without reading anything. No model was called, and no mechanism was checked. Set LLM_PROVIDER to correlate for real.\n\nThe commit, in full:\n\n  465f015d0c  2026-08-16 13:00Z  —  orders-api ci\n    docs: describe the refund window and rate limits\n    files (1):\n      README.md  +14/-0\n\n    diff:\n      diff --git a/README.md b/README.md\n      new file mode 100644\n      index 0000000..369d922\n      --- /dev/null\n      +++ b/README.md\n      @@ -0,0 +1,14 @@\n      +# orders-api\n      +\n      +Order placement, lookup and refunds.\n      +\n      +## Refunds\n      +\n      +A refund is accepted for 30 days after the order is placed, measured from\n      +`created_at`. Requests outside that window return 422 — the request is well\n      +formed, the order's state simply does not allow it.\n      +\n      +## Rate limits\n      +\n      +Write paths are limited per client to 120 requests of burst, refilling at\n      +2 requests per second. Over the limit is a 429 with `retry-after`."
+}

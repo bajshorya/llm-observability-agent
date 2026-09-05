@@ -303,6 +303,63 @@ export async function diagnosisFunnel(): Promise<DiagnosisFunnel> {
   };
 }
 
+export interface RenderedDiagnosis {
+  anomalyId: string;
+  sha: string;
+  commitFiles: string[];
+  context: string;
+}
+
+/**
+ * Render the packet for an incident, optionally attributing it to a commit
+ * OTHER than the one correlation named.
+ *
+ * The override exists for golden-case capture. A diagnosis case is only hard if
+ * the set contains pairs — one incident attributed once to the commit that
+ * caused it and once to a commit that plainly could not have — because that is
+ * what separates a model reading the diff from one agreeing with whatever it
+ * was handed. Building the second half requires attributing an incident to an
+ * innocent commit on purpose.
+ *
+ * The pipeline never passes it: a real diagnosis must reason about the commit
+ * Phase 3 actually named.
+ */
+export async function renderDiagnosisFor(
+  anomalyId?: string,
+  options: DiagnoseOptions = {},
+  shaOverride?: string,
+): Promise<RenderedDiagnosis | null> {
+  const [incident] = anomalyId
+    ? ((await db
+        .select(PENDING_COLUMNS)
+        .from(anomalies)
+        .innerJoin(correlations, eq(correlations.anomalyId, anomalies.id))
+        .where(eq(anomalies.id, anomalyId))) as PendingDiagnosis[])
+    : ((await db
+        .select(PENDING_COLUMNS)
+        .from(anomalies)
+        .innerJoin(correlations, eq(correlations.anomalyId, anomalies.id))
+        .orderBy(desc(anomalies.detectedAt))
+        .limit(1)) as PendingDiagnosis[]);
+
+  if (!incident) return null;
+
+  const sha = shaOverride ?? incident.sha;
+  if (sha === null) return null;
+
+  const commit = await commitBySha(sha, options.repoPath);
+  if (!commit) return null;
+
+  const input = await buildDiagnosisInput(incident, commit);
+
+  return {
+    anomalyId: incident.id,
+    sha: commit.sha,
+    commitFiles: commit.files.map((file) => file.path),
+    context: renderDiagnosisContext(input),
+  };
+}
+
 /** Render the full prompt for an incident without calling anything. */
 export async function previewDiagnosisPrompt(
   anomalyId?: string,
