@@ -30,7 +30,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { renderContextForAnomaly } from "@obs/backend/src/classification/classify";
-import { getAnomaly, getCorrelation, getLlmCalls, getWindowSample } from "@/lib/queries";
+import {
+  getAnomaly,
+  getCorrelation,
+  getHypothesis,
+  getLlmCalls,
+  getWindowSample,
+} from "@/lib/queries";
 import { describeTrigger, formatAge, formatWindow, severityClass, tokens } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -40,8 +46,9 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
   const anomaly = await getAnomaly(id);
   if (!anomaly) notFound();
 
-  const [correlation, calls, sample, rendered] = await Promise.all([
+  const [correlation, hypothesis, calls, sample, rendered] = await Promise.all([
     getCorrelation(anomaly.id),
+    getHypothesis(anomaly.id),
     getLlmCalls(anomaly.id),
     getWindowSample(anomaly.service, anomaly.windowStart, anomaly.windowEnd),
     // Rebuilt from the same pure renderer the pipeline uses, so the page cannot
@@ -183,6 +190,47 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
             Declining is a real answer here, not a failure. Most incidents are not caused by a
             recent deploy, and a model with no way to say so invents a culprit.
           </p>
+        )}
+      </section>
+
+      {/* ---- Phase 4 --------------------------------------------------------- */}
+      <section className="stage">
+        <h2>Why it broke, and what to change</h2>
+        <p className="tier">Phase 4 · root cause · nothing is applied</p>
+
+        {hypothesis === null ? (
+          <p style={{ color: "var(--muted)" }}>
+            {correlation?.suspectedCommitSha
+              ? "Not diagnosed yet — run `pnpm diagnose`."
+              : "Not diagnosed. This stage reads the blamed commit's diff, and no commit was named."}
+          </p>
+        ) : (
+          <>
+            {!hypothesis.explainsTheFailure && (
+              <p style={{ color: "var(--high)", marginTop: 0, fontSize: 14 }}>
+                This stage <strong>disagrees</strong> with the correlation above: the diff it read
+                does not account for the symptoms. That disagreement is the finding.
+              </p>
+            )}
+
+            <dl className="facts">
+              <dt>Root cause</dt>
+              <dd>{hypothesis.rootCause}</dd>
+              <dt>Suggested fix</dt>
+              <dd>{hypothesis.suggestedFix}</dd>
+              <dt>Confidence</dt>
+              <dd>{hypothesis.confidence.toFixed(2)}</dd>
+              <dt>Applied</dt>
+              <dd>
+                <span className="tag">{hypothesis.applied ? "applied" : "no — human gate"}</span>
+              </dd>
+            </dl>
+
+            <p style={{ color: "var(--muted)", marginTop: 14, fontSize: 14 }}>
+              Nothing here has been applied, and no code in this repository can apply it. The
+              agent diagnoses; a human decides.
+            </p>
+          </>
         )}
       </section>
 
