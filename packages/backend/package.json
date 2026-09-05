@@ -9,6 +9,7 @@
     "detect": "tsx src/detection/cli.ts",
     "classify": "tsx src/classification/cli.ts",
     "correlate": "tsx src/correlation/cli.ts",
+    "diagnose": "tsx src/diagnosis/cli.ts",
     "eval": "tsx src/eval/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",

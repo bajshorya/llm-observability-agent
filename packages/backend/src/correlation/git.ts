@@ -40,12 +40,13 @@
  *   - `defaultLookback`     the bounds, with their reasoning above
  *   - `resolveTargetRepo`   TARGET_REPO_PATH -> absolute path, verified
  *   - `collectCommits`      the anomaly window -> a validated CommitWindow
+ *   - `commitBySha`         one commit with its diff, for Phase 4
  */
 
 import { execFile } from "node:child_process";
 import { isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
-import { commitWindowSchema, type CommitWindow } from "@obs/shared";
+import { commitWindowSchema, type CandidateCommit, type CommitWindow } from "@obs/shared";
 import { REPO_ROOT, env } from "../env";
 import { GIT_LOG_ARGS, parseGitLog } from "./commits";
 
@@ -92,6 +93,43 @@ export async function resolveTargetRepo(path = env.TARGET_REPO_PATH): Promise<st
   }
 
   return absolute;
+}
+
+/**
+ * One commit by sha, with its diff, regardless of any time window.
+ *
+ * Phase 4 needs the commit Phase 3 blamed, and asking for it by sha rather than
+ * re-deriving it from a lookback removes a coupling: the blamed commit is only
+ * guaranteed to be inside the window Phase 3 happened to use, and that window
+ * is configurable.
+ *
+ * Returns null when the sha is not in the repository. A sha that has been
+ * rewritten or garbage-collected since correlation should surface as "that
+ * commit is gone", not as a confident explanation of something that no longer
+ * exists.
+ *
+ * Always includes the diff. Unlike the correlation packet, where hunks are a
+ * measured trade, Phase 4 cannot do its job without them.
+ */
+export async function commitBySha(
+  sha: string,
+  repoPath?: string,
+): Promise<CandidateCommit | null> {
+  const repo = await resolveTargetRepo(repoPath);
+
+  try {
+    const { stdout } = await run(
+      "git",
+      ["-C", repo, ...GIT_LOG_ARGS, "--max-count=1", sha],
+      { maxBuffer: MAX_STDOUT_BYTES },
+    );
+
+    const [commit] = parseGitLog(stdout);
+    return commit ?? null;
+  } catch {
+    // `git log <unknown-sha>` exits non-zero rather than printing nothing.
+    return null;
+  }
 }
 
 export interface CollectCommitsOptions {

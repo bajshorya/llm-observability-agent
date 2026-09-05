@@ -9,6 +9,9 @@
  *                `classificationSchema` JSON.
  *   correlator   returns the newest candidate commit — the naive "blame the
  *                last deploy" heuristic — as `correlationSchema` JSON.
+ *   root_cause   declines. There is no cheap non-model way to derive a
+ *                mechanism from a diff, so inventing a baseline here would
+ *                only produce a straw man.
  *
  * WHY IT IS THE DEFAULT
  * Three reasons, and none of them is "for tests":
@@ -153,12 +156,49 @@ function correlate(user: string): string {
   });
 }
 
+/**
+ * The root-cause baseline: decline to diagnose.
+ *
+ * Unlike the other two, this stub does not attempt the task, and that is the
+ * honest choice rather than a gap. Classification has a statistical baseline
+ * worth beating and correlation has a heuristic one; explaining WHY a diff
+ * breaks something has no cheap non-model equivalent at all. There is no
+ * counting or pattern-matching that produces a mechanism.
+ *
+ * So it returns `explainsTheFailure: false` with a reasoning that says no model
+ * was called. That keeps the whole pipeline runnable with no API key — the
+ * property the default provider exists for — without inventing a baseline that
+ * would only ever be a straw man.
+ */
+function diagnose(): string {
+  return JSON.stringify({
+    explainsTheFailure: false,
+    rootCause:
+      "Stub diagnosis: no model was called, and there is no cheap non-model way to " +
+      "derive a mechanism from a diff. Set LLM_PROVIDER to diagnose for real.",
+    suggestedFix:
+      "None proposed. A suggested fix that was not reasoned from the diff would be " +
+      "worse than no suggestion, because someone would have to read it before " +
+      "discovering it says nothing.",
+    confidence: 0.1,
+  });
+}
+
 export function createStubProvider(): LlmProvider {
   return {
     name: "stub",
     model: "deterministic-stub",
     complete(request: LlmRequest): Promise<LlmCompletion> {
-      if (request.agent !== "classifier" && request.agent !== "correlator") {
+      const answer =
+        request.agent === "classifier"
+          ? classify(request.user)
+          : request.agent === "correlator"
+            ? correlate(request.user)
+            : request.agent === "root_cause"
+              ? diagnose()
+              : null;
+
+      if (answer === null) {
         throw new LlmProviderError(
           `stub: no canned response for the ${request.agent} agent yet`,
           "stub",
@@ -166,7 +206,7 @@ export function createStubProvider(): LlmProvider {
       }
 
       return Promise.resolve({
-        text: request.agent === "classifier" ? classify(request.user) : correlate(request.user),
+        text: answer,
         model: "deterministic-stub",
         /**
          * Null rather than an estimate. The cost table is evidence for a claim
