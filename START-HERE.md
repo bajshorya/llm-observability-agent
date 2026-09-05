@@ -1,6 +1,6 @@
 # Start Here
 
-There are ~50,000 words of documentation in this repo for ~8,100 lines of code.
+There are ~69,000 words of documentation in this repo for ~11,500 lines of code.
 **Do not read them in order.** They are reference material — written to be
 searched when you have a specific question, the way you use a man page.
 
@@ -113,7 +113,7 @@ can only ever answer is one whose answers mean less.
 
 ## The code map
 
-Faster than the docs for most questions. The whole system is ~8,100 lines.
+Faster than the docs for most questions. The whole system is ~11,500 lines.
 
 ```
 packages/shared/        The contract. Zod schemas + signature normalisation.
@@ -178,6 +178,9 @@ want the extended reasoning behind a particular decision.
 | Why would an anomaly be dismissed? | `PHASE-2` §9 and `EVALS` §3 |
 | Is the classifier any good? | `EVALS` §8–10 |
 | Is the correlator any good? | `EVALS` §14 |
+| Does this use RAG? | `AI-LAYER` §6 — no, and why not |
+| What does "agent" mean here? | `AI-LAYER` §2 |
+| How is the model's output validated? | `AI-LAYER` §4, §9 |
 | Why does one case fail on every model? | `EVALS` §14 |
 | Why are eval scores not comparable across captures? | `EVALS` §14 |
 | Which commit caused it? | `PHASE-3` §1, §5 |
@@ -187,15 +190,16 @@ want the extended reasoning behind a particular decision.
 | What stops a model inventing a commit? | `PHASE-3` §9 |
 | Why is `suspectedCommitSha` nullable? | `PHASE-3` §4 |
 | What is known to be broken? | `CODEBASE.md` §19 — consolidated |
-| What is next? | `PHASE-3` §12–13 |
+| What is next? | `CODEBASE.md` §20 — every phase is built; what is open is measurement |
 
-(`PHASE-1` = `DOCUMENTATION-PHASE-1.md`, and so on.)
+(`PHASE-1` = `DOCUMENTATION-PHASE-1.md`, `AI-LAYER` = `DOCUMENTATION-AI-LAYER.md`,
+and so on.)
 
 ---
 
 ## The reading order
 
-Eleven documents, about three hours if you read them all. You don't need
+Twelve documents, about three and a half hours if you read them all. You don't need
 to. **An hour in this order and you understand the system**; the rest
 becomes lookup.
 
@@ -214,6 +218,7 @@ question, not reading you owe.
 |---|---|
 | Why a threshold is 3σ; how the statistics work | `PHASE-1` §4–6, §13 |
 | The LLM layer in depth; adding a provider | `PHASE-2` §4–8 |
+| **The AI layer end to end** — agents, prompts, context, RAG | `AI-LAYER` — whole document |
 | How evaluation works and what it found | `EVALS` — whole document |
 | Commit correlation and the fixture repository | `PHASE-3` — whole document |
 | Root cause, and why the diff is mandatory | `PHASE-4` — whole document |
@@ -261,6 +266,7 @@ interesting in that position and misleading in any other.
 | Structured output and the repair loop | `CODEBASE.md` §12 | `PHASE-2` §5 |
 | The evidence packet | `CODEBASE.md` §13 | `EVALS` §9 |
 | **Evals** | `CODEBASE.md` §14 | `EVALS` — whole document |
+| **The AI layer as a whole** | `AI-LAYER` §1–4 | `AI-LAYER` §5–12 |
 | **Commit correlation** | `CODEBASE.md` §14a | `PHASE-3` §3–9 |
 | The data model | `CODEBASE.md` §4 | `DOCUMENTATION` §9 |
 
@@ -286,7 +292,7 @@ Known instances:
 
 - `PHASE-1` §16 says anomalies are never dismissed and stay `open`. Phase 2
   changed that — see `PHASE-2` §9 and §10.
-- `PHASE-1` says 27 unit tests, `PHASE-2` says 77. There are now 129.
+- `PHASE-1` says 27 unit tests, `PHASE-2` says 77. There are now 177.
 - `PHASE-2` §6 describes the log sample as drawn evenly across the window. It is
   now drawn by message shape — see `EVALS` §4, which explains why the original
   approach silently dropped the one line that explained a benign window.
@@ -299,9 +305,21 @@ Known instances:
 - `PHASE-2` §18 says the correlation agent "gets a filtered, described,
   prioritised list". True, and still only half of its input; the other half is
   `PHASE-3` §3.
+- The original proposal's Phase 5 says "Next.js timeline of anomalies" and
+  little else. What was built is a timeline **and** a five-panel reasoning
+  trace, and the reasons for choosing Next.js over two cheaper options are in
+  `PHASE-5` §2 — the proposal records the choice, not the argument.
+- `PHASE-3` §14 lists "no diff content" as a limitation of the correlation
+  packet. Still true by default, but hunks now exist behind
+  `CORRELATION_DIFFS`; `EVALS` §14 has the A/B that decided the default, and
+  `PHASE-4` §2 explains why the same trade does not exist one stage later.
+- Anything describing `hypothesisSchema` as three fields predates Phase 4. It
+  has four — `explainsTheFailure` was added so the root-cause stage can
+  disagree with the correlation it is handed. `PHASE-4` §4.
 
 This is the cost of chronological documentation, and it is worth knowing about
-before it misleads you.
+before it misleads you. `CODEBASE.md` and `DOCUMENTATION-AI-LAYER.md` are the
+two organised by subject rather than by date, and are current by construction.
 
 ---
 

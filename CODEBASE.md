@@ -560,6 +560,12 @@ outside keeps the moving parts obvious.
 
 ## 12. Backend — LLM
 
+> For the AI layer as a *subject* rather than a directory — what "agent" means
+> here, structured output and the repair loop, how evidence is chosen, whether
+> any of it is RAG, and what is deliberately absent — see
+> `DOCUMENTATION-AI-LAYER.md`. This section covers the files.
+
+
 **`types.ts`** (62 lines) — the provider boundary, and the whole contract:
 
 ```ts

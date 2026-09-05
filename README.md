@@ -370,6 +370,60 @@ stage names the command that would advance it.
 
 ---
 
+## The AI layer
+
+The LLM engineering, in one place: `DOCUMENTATION-AI-LAYER.md`. The short
+version.
+
+**An "agent" here is a role that calls an LLM with its own prompt and its own
+output schema.** Three exist — classifier, correlator, root cause. They do not
+use tools, do not loop, do not plan, and never call each other. Each asks one
+question, reads one evidence packet, returns one JSON object.
+
+The agentic claim is narrower and more defensible than autonomy: **the
+correlation stage reads two independent data sources — runtime behaviour and
+source history — and produces a conclusion present in neither on its own.**
+
+**The provider contract is one method.** Five configurable names across three
+files, because three of them are OpenAI-compatible and share one. No streaming,
+no tool calling, no multi-turn — nothing here needs them, and unused surface is
+surface every new provider would have to implement.
+
+**Every answer is forced through a Zod schema**, and an invalid one is
+re-prompted with its own output plus the specific errors, twice at most. JSON
+mode constrains syntax, not semantics: a model can return perfectly valid JSON
+with a severity of `"quite bad"`.
+
+**Declining is a first-class output.** A model with no way to decline does not
+decline — it invents. So `isRealIncident` can be false, `suspectedCommitSha` can
+be null, `explainsTheFailure` can be false, and each of those is *scored
+separately* rather than blended into an accuracy number that would hide it.
+
+### Does this use RAG?
+
+**No** — and the answer is worth reading rather than assuming, because the
+*problem* RAG solves is genuinely present here.
+
+There are no embeddings, no vector store and no similarity search. Evidence
+selection is **structural and statistical**: which detector fired, which minute,
+which endpoint, which normalised message shape. That signal is exact, free, and
+already computed — where semantic similarity would be approximate, cost money
+per line, and make every eval score a moving target, since the golden cases
+depend on the same window always producing the same prompt.
+
+Two things here *are* recognisably retrieval, and the comparison is fair.
+`sampleDiverse` is a diversity re-ranker solving the problem MMR solves, using
+message shape instead of cosine distance. Phase 3's commit collector is
+retrieval over a second corpus, with `--since`/`--until`/`--max-count` as the
+query and a 48-hour, 25-commit lookback as the `k`.
+
+RAG would start earning its keep with a corpus where similarity is the only
+signal — past incident write-ups, runbooks, postmortems. "Find the three past
+incidents that look like this" has no z-score. That is a real extension, and it
+is not built.
+
+---
+
 ## Evals
 
 Six golden cases — three real incidents, three benign windows that trip Tier 1

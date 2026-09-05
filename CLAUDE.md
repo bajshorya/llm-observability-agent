@@ -21,7 +21,8 @@ correlation, evals), `dashboard` (Next.js, read-only).
 | Orientation, reading order, concept map | `START-HERE.md` |
 | Architecture, data model, every source file | `CODEBASE.md` |
 | Why a threshold is what it is | `DOCUMENTATION-PHASE-1.md` |
-| The LLM layer in depth | `DOCUMENTATION-PHASE-2.md` |
+| The LLM layer in depth, by phase | `DOCUMENTATION-PHASE-2.md` |
+| **The AI layer as a subject** — agents, providers, structured output, context construction, whether any of it is RAG | `DOCUMENTATION-AI-LAYER.md` |
 | Commit correlation, and the fixture repo | `DOCUMENTATION-PHASE-3.md` |
 | Root cause, and why the diff is mandatory there | `DOCUMENTATION-PHASE-4.md` |
 | The dashboard and its reasoning trace | `DOCUMENTATION-PHASE-5.md` |
@@ -122,6 +123,13 @@ spends quota is an explicit act.
 what makes the whole pipeline run with no API key, and it is the baseline each
 tier is measured against: statistical judgement for Tier 2, "blame the newest
 commit" for Phase 3. Both are deliberately the thing the tier must beat.
+
+**There is no RAG here, and do not add one casually.** No embeddings, no vector
+store, no similarity search. Evidence selection is structural and statistical —
+detector output, time windows, normalised message shape — which is deterministic
+and free, and determinism is what makes the golden cases meaningful. The
+reasoning, and the conditions that would change it, are in
+`DOCUMENTATION-AI-LAYER.md` §6.
 
 **State trade-offs; do not hide them.** Every design-decision table has a costs
 column, and limitations are listed rather than omitted.
