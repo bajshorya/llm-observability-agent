@@ -42,6 +42,7 @@ import { createProvider } from "../llm";
 import { llmUsageSummary } from "../llm/calls";
 import { llmConfig } from "../llm/config";
 import {
+  anomalyCount,
   classificationFunnel,
   classifyAnomalies,
   previewPrompt,
@@ -170,7 +171,14 @@ async function main(): Promise<void> {
   console.log(`Provider: ${result.provider} (${result.model})`);
 
   if (result.outcomes.length === 0) {
-    console.log("  nothing to classify — every anomaly already has a verdict");
+    // Two different empty results, and saying the wrong one sends someone
+    // looking for a bug in this tier when they need the one before it.
+    const total = await anomalyCount();
+    console.log(
+      total === 0
+        ? "  nothing to classify — no anomalies have been detected yet. Run `pnpm detect`."
+        : "  nothing to classify — every anomaly already has a verdict",
+    );
     return;
   }
 

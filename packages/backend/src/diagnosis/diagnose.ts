@@ -247,6 +247,22 @@ export async function diagnoseAnomalies(
   return { provider: provider.name, model: provider.model, outcomes };
 }
 
+/**
+ * How many correlations actually named a commit.
+ *
+ * This stage only runs on those, so "nothing to diagnose" most often means the
+ * correlator declined — which is a finding, not a backlog. Reporting it as
+ * "already diagnosed" would hide the most interesting state this pipeline
+ * produces.
+ */
+export async function attributedCount(): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(correlations)
+    .where(sql`${correlations.suspectedCommitSha} is not null`);
+  return row?.n ?? 0;
+}
+
 export interface DiagnosisFunnel {
   attributed: number;
   diagnosed: number;

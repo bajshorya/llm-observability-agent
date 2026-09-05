@@ -30,6 +30,7 @@ import { env, llmProviderNames, type LlmProviderName } from "../env";
 import { createProvider } from "../llm";
 import { llmConfig } from "../llm/config";
 import {
+  attributedCount,
   diagnoseAnomalies,
   diagnosisFunnel,
   previewDiagnosisPrompt,
@@ -157,7 +158,16 @@ async function main(): Promise<void> {
   console.log(`Provider: ${result.provider} (${result.model})`);
 
   if (result.outcomes.length === 0) {
-    console.log("  nothing to diagnose — every attributed incident already has a hypothesis");
+    const total = await attributedCount();
+    console.log(
+      values.anomaly
+        ? `  no attributed incident with id ${values.anomaly} — it may not exist, or its ` +
+            "correlation named no commit"
+        : total === 0
+          ? "  nothing to diagnose — no correlation has named a commit. Run `pnpm correlate`, " +
+              "or it declined on every incident, which is a finding rather than a gap."
+          : "  nothing to diagnose — every attributed incident already has a hypothesis",
+    );
     return;
   }
 
