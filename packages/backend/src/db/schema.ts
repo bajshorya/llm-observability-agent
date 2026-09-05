@@ -173,6 +173,14 @@ export const hypotheses = sqliteTable(
     anomalyId: text("anomaly_id")
       .notNull()
       .references(() => anomalies.id, { onDelete: "cascade" }),
+    /**
+     * Whether the diff explains the failure at all. False is a real answer and
+     * a useful one — it means this stage disagrees with the correlation it was
+     * handed, which is worth seeing rather than reconciling away.
+     */
+    explainsTheFailure: integer("explains_the_failure", { mode: "boolean" })
+      .notNull()
+      .default(true),
     rootCause: text("root_cause").notNull(),
     suggestedFix: text("suggested_fix").notNull(),
     confidence: real("confidence").notNull(),
