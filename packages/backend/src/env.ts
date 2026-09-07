@@ -111,12 +111,21 @@ const envSchema = z.object({
   /**
    * Include unified diffs in the correlation packet. Off by default.
    *
-   * Measured, not guessed, and the result is a trade rather than a win. On
-   * `gemini-2.5-flash` hunks took declining from 2/4 to 4/4; on a 3B local
-   * model they took attribution from 2/2 to 0/2, because the packet grows 3.7x
-   * and the smaller model falls back to naming the newest commit. Useful for a
-   * capable model, harmful for a weak one, so it is a switch rather than a
-   * default. `DOCUMENTATION-EVALS.md` §14.
+   * Measured on three models, and the default is off because the DEFAULT MODEL
+   * is one of the two it hurts:
+   *
+   *   gemini-3.5-flash   6/6 without hunks, regresses to 1/2 attribution with
+   *   gemini-2.5-flash   2/4 declining without, 4/4 with
+   *   llama3.2 (3B)      2/2 attribution without, 0/2 with
+   *
+   * `gemini-3.5-flash`'s regression reproduced across two separate captures
+   * with the same reasoning both times: shown the limiter's code, it concludes
+   * the limiter is working as designed and declines. That reading is not
+   * unreasonable — the code IS correct, and the defect is in the constants it
+   * shipped with — which is precisely why more evidence does not help here.
+   *
+   * Turn it on only for a model you have measured yourself.
+   * `DOCUMENTATION-EVALS.md` §14.
    */
   CORRELATION_DIFFS: z
     .enum(["0", "1", "true", "false"])

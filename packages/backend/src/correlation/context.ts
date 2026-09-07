@@ -99,9 +99,15 @@
  *   - the diff arm caused one regression the control arm did not, on one model
  *   - the packet grew 3.7×
  *
- * So the change is unmotivated by current evidence, has one observed harm, and
- * costs quota on a free tier. Off by default until the golden set is large and
- * stable enough to answer the question. `DOCUMENTATION-EVALS.md` §14.
+ * The question is now settled, and the answer is no. Measured on three models
+ * against a deterministic capture: `gemini-3.5-flash` scores 6/6 WITHOUT hunks
+ * and regresses to 1/2 attribution with them; `llama3.2` regresses too;
+ * `gemini-2.5-flash` improves. The default model is one of the two that hunks
+ * hurt, and its regression reproduced across two captures with identical
+ * reasoning, so the default stays off.
+ *
+ * The capability is kept because the trade is real for some models, not because
+ * the question is open. `DOCUMENTATION-EVALS.md` §14.
  */
 
 import type { AnomalyTrigger, CandidateCommit, CommitWindow, Severity } from "@obs/shared";
