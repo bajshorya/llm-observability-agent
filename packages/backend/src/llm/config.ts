@@ -33,7 +33,9 @@
  * Free-tier model identifiers churn — providers retire and rename them — so
  * `LLM_MODEL` overrides any of these without a code change. That is the
  * intended fix when one starts returning 404, and it is also how to get past a
- * 429, since quota is bucketed per model.
+ * 429 that names `limit: 20`, since the daily quota is bucketed per model. A
+ * 429 naming `limit: 5` is the per-minute window and resolves by waiting, which
+ * `http.ts` now does automatically by honouring the delay the server asks for.
  */
 
 import { env, type LlmProviderName } from "../env";

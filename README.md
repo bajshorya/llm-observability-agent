@@ -426,6 +426,11 @@ pnpm eval --correlation --provider stub    # correlation: 0/2 and 0/4
 pnpm eval --diagnosis --provider stub      # diagnosis: 0/2 and 3/3
 ```
 
+**These commands exit non-zero, and that is correct.** The eval CLI returns 1
+whenever any case scores wrong, so a scheduled run surfaces a regression rather
+than passing quietly. Against the stub every wrong answer is expected, so
+`Exit status 1` is the harness working. Read the scorecard, not the exit code.
+
 **What to look for:** the diagnosis stub scores 0/2 and 3/3 by declining
 everything. Blended that is 60% and reads as respectable. Split, the degenerate
 strategy is obvious — which is the entire argument for the split scorecard.
@@ -448,14 +453,26 @@ Put a Gemini key in `.env` (free tier, no card), then:
 
 ```bash
 bash scripts/demo.sh gemini
-pnpm eval --provider gemini                # expect 6/6
-pnpm eval --correlation --provider gemini  # expect 2/2 and 4/4
-pnpm eval --diagnosis --provider gemini    # expect 5/5
+pnpm eval --provider gemini
+pnpm eval --correlation --provider gemini
+pnpm eval --diagnosis --provider gemini
 ```
 
-**Budget: 20 requests per day, per model.** A full sweep is about 17. When you
-hit a 429, point `LLM_MODEL` at a different model rather than waiting — the
-retry hint in the error is misleading.
+Expect 6/6 on every axis, then 2/2 and 4/4, then 5/5.
+
+**Run them one at a time, without a trailing `# comment`.** `pnpm run` forwards
+everything after the script name, so `pnpm eval --provider gemini  # note`
+arrives as the argument `#` and is rejected.
+
+**A free-tier key has two quotas, and they fail differently:**
+
+| Limit | Message says | What to do |
+|---|---|---|
+| 5 requests per minute | `limit: 5` | wait ~40s and re-run — the retry hint is accurate |
+| 20 requests per day | `limit: 20` | switch models with `LLM_MODEL`, or come back tomorrow |
+
+A full sweep is about 17 requests, so the daily cap is reachable in one sitting.
+Read the `limit:` number in the error before concluding you are out for the day.
 
 ### Prove the harness is honest
 

@@ -22,7 +22,7 @@
  *              response.
  *
  * BACKOFF
- * 500 ms doubling, unless the server sent `Retry-After` — which is honoured up
+ * 500 ms doubling, unless the server asked for a specific delay — honoured up
  * to 30 seconds, because the server knows its own quota window and a constant
  * does not.
  *
@@ -52,14 +52,51 @@ const BASE_BACKOFF_MS = 500;
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Honour `Retry-After` when the server sends it; it knows better than we do. */
-function backoffMs(attempt: number, response?: Response): number {
+/** Ceiling on an honoured server delay. A free tier's per-minute window is 60s. */
+const MAX_HONOURED_DELAY_MS = 65_000;
+
+/**
+ * A retry delay the server asked for, in milliseconds, or null.
+ *
+ * Checked in two places because providers put it in two places. A
+ * `Retry-After` header is the HTTP-standard answer; Google's APIs instead
+ * return it in the JSON body, either as a `RetryInfo` detail or in the message
+ * text ("Please retry in 42.23s").
+ *
+ * Reading only the header was a real bug, and an expensive one to diagnose. A
+ * free-tier key has TWO quotas — five requests per minute and twenty per day —
+ * and the per-minute one is hit constantly, because an eval fires six cases
+ * back to back. With no header to read, backoff fell to 500ms then 1s and gave
+ * up inside the same rate-limited minute, so a run that only needed to wait
+ * forty seconds failed instead. Worse, it failed with a message naming the
+ * DAILY quota, which is how it got misread as "quota exhausted, come back
+ * tomorrow" for far longer than it should have.
+ */
+export function serverRequestedDelayMs(response?: Response, body?: string): number | null {
   const header = response?.headers.get("retry-after");
   if (header) {
     const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      return Math.min(seconds * 1000, 30_000);
-    }
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  }
+
+  if (!body) return null;
+
+  // Google's RetryInfo detail: "retryDelay": "42s"
+  const retryInfo = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(body);
+  if (retryInfo?.[1]) return Number(retryInfo[1]) * 1000;
+
+  // Failing that, the human-readable form in the message.
+  const inMessage = /retry in (\d+(?:\.\d+)?)\s*s/i.exec(body);
+  if (inMessage?.[1]) return Number(inMessage[1]) * 1000;
+
+  return null;
+}
+
+/** Honour what the server asked for; it knows better than we do. */
+function backoffMs(attempt: number, response?: Response, body?: string): number {
+  const requested = serverRequestedDelayMs(response, body);
+  if (requested !== null && requested >= 0) {
+    return Math.min(requested, MAX_HONOURED_DELAY_MS);
   }
   return BASE_BACKOFF_MS * 2 ** attempt;
 }
@@ -125,7 +162,9 @@ export async function postJson(options: PostJsonOptions): Promise<unknown> {
     if (!RETRYABLE_STATUSES.has(response.status)) throw error;
 
     lastError = error;
-    if (attempt < maxAttempts - 1) await sleep(backoffMs(attempt, response));
+    // `detail` is the response body, already read above — it is where Google
+    // puts the retry delay.
+    if (attempt < maxAttempts - 1) await sleep(backoffMs(attempt, response, detail));
   }
 
   throw lastError ?? new LlmProviderError(`${provider}: request failed`, provider);
