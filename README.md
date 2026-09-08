@@ -393,6 +393,102 @@ stage names the command that would advance it.
 
 ---
 
+## Verify it yourself
+
+Every claim in this README is checkable in a few minutes, and most of it without
+an API key. In rough order of cost.
+
+### Free, offline, no key — about two minutes
+
+```bash
+pnpm install
+pnpm typecheck                  # strict TS across four packages
+pnpm test                       # 197 unit tests, ~300ms, no network
+bash scripts/demo.sh            # the whole pipeline end to end
+```
+
+`demo.sh` builds the target repository, generates traffic, and runs all four
+stages, printing what each concluded and the funnel at the end. It writes to a
+scratch database and never touches `data/dev.db`.
+
+**What to look for:** Tier 1 reports z-scores and baselines, not just "anomaly".
+The correlator is offered six candidate commits. Every stage says which provider
+answered it, and the stub says "no model was called" in as many words.
+
+### Check the baselines, still free
+
+The stub is not a mock — it is the thing each tier has to beat. Run the evals
+against it and the numbers should be *bad* in specific ways:
+
+```bash
+pnpm eval --provider stub                  # classifier: 0/3 on benign windows
+pnpm eval --correlation --provider stub    # correlation: 0/2 and 0/4
+pnpm eval --diagnosis --provider stub      # diagnosis: 0/2 and 3/3
+```
+
+**What to look for:** the diagnosis stub scores 0/2 and 3/3 by declining
+everything. Blended that is 60% and reads as respectable. Split, the degenerate
+strategy is obvious — which is the entire argument for the split scorecard.
+
+### Read what the model is actually sent
+
+```bash
+pnpm eval --show new-error                     # a classifier packet
+pnpm eval --correlation --show limiter-misconfig
+pnpm eval --diagnosis --show new-error-guilty  # includes the full diff
+```
+
+These are stored verbatim — the exact strings sent to a model on a real run,
+not reconstructions. `pnpm classify --preview <id>` prints the same thing for a
+live anomaly and calls nothing.
+
+### With a free API key — about five minutes
+
+Put a Gemini key in `.env` (free tier, no card), then:
+
+```bash
+bash scripts/demo.sh gemini
+pnpm eval --provider gemini                # expect 6/6
+pnpm eval --correlation --provider gemini  # expect 2/2 and 4/4
+pnpm eval --diagnosis --provider gemini    # expect 5/5
+```
+
+**Budget: 20 requests per day, per model.** A full sweep is about 17. When you
+hit a 429, point `LLM_MODEL` at a different model rather than waiting — the
+retry hint in the error is misleading.
+
+### Prove the harness is honest
+
+Three properties worth checking, because they are what make the numbers mean
+anything:
+
+```bash
+# 1. Captures are reproducible — 6 files change, and only capturedAt in each
+bash scripts/capture-correlation-cases.sh && git diff --stat
+
+# 2. The prompts contain nothing from the fixture they are scored against
+pnpm test 2>&1 | grep -i prompt
+
+# 3. Eval calls are never billed to the cost table
+pnpm eval --provider gemini && pnpm classify --stats
+```
+
+The third is the one worth understanding: `llm_calls` substantiates a claim
+about what *running* the system costs, so eval calls are deliberately kept out
+of it.
+
+### See it in a browser
+
+```bash
+pnpm dashboard        # localhost:3000
+```
+
+The timeline carries the funnel; a per-anomaly page shows the five stages in
+pipeline order, including the evidence packet verbatim and every model call
+made about that anomaly — failed ones included.
+
+---
+
 ## The AI layer
 
 The LLM engineering, in one place: `DOCUMENTATION-AI-LAYER.md`. The short
