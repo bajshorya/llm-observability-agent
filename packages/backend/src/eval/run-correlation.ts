@@ -39,7 +39,7 @@ import {
   type CorrelationCaseScore,
   type CorrelationSummary,
 } from "./score-correlation";
-import type { EvalFailure } from "./run";
+import { isQuotaExhausted, skipRemaining, type EvalFailure } from "./run";
 
 export interface CorrelationEvalRun {
   provider: string;
@@ -57,7 +57,7 @@ export async function runCorrelationEval(
   const scores: CorrelationCaseScore[] = [];
   const failures: EvalFailure[] = [];
 
-  for (const golden of cases) {
+  for (const [index, golden] of cases.entries()) {
     try {
       const { value, stats } = await generateStructured({
         provider,
@@ -83,6 +83,16 @@ export async function runCorrelationEval(
         name: golden.name,
         error: error instanceof Error ? error.message : String(error),
       });
+
+      /**
+       * A daily-quota refusal will not clear, so grinding through the rest
+       * costs minutes to learn nothing. The remaining cases are recorded as
+       * skipped rather than dropped, so the count still adds up.
+       */
+      if (isQuotaExhausted(error)) {
+        failures.push(...skipRemaining(cases, index + 1));
+        break;
+      }
     }
   }
 

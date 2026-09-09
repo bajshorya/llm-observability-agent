@@ -52,6 +52,18 @@ harness's own defects are written up alongside the numbers in
 
 ## Quick start
 
+> **zsh users: run this once first.**
+>
+> ```bash
+> setopt interactive_comments
+> ```
+>
+> zsh has `interactive_comments` **off by default**, so a pasted command with a
+> trailing `# comment` sends the comment through as arguments and the command
+> fails with `Unexpected argument '#'`. Nearly every command below is annotated,
+> so without this they will all break. Add the line to `~/.zshrc` to make it
+> stick. bash needs nothing.
+
 **The whole thing, in one command:**
 
 ```bash
@@ -458,11 +470,8 @@ pnpm eval --correlation --provider gemini
 pnpm eval --diagnosis --provider gemini
 ```
 
-Expect 6/6 on every axis, then 2/2 and 4/4, then 5/5.
-
-**Run them one at a time, without a trailing `# comment`.** `pnpm run` forwards
-everything after the script name, so `pnpm eval --provider gemini  # note`
-arrives as the argument `#` and is rejected.
+Expect 6/6 on every axis, then 2/2 and 4/4, then 5/5. Run them one at a time so
+a per-minute rate limit hits one command rather than spilling into the next.
 
 **A free-tier key has two quotas, and they fail differently:**
 

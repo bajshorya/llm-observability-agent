@@ -49,6 +49,12 @@ const RETRYABLE_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
 const BASE_BACKOFF_MS = 500;
 
+/**
+ * Above this, a delay is a rate-limit window rather than ordinary backoff, and
+ * is worth waiting for at most once. See the retry loop.
+ */
+const SHORT_WAIT_MS = 5_000;
+
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -122,6 +128,8 @@ export async function postJson(options: PostJsonOptions): Promise<unknown> {
   } = options;
 
   let lastError: LlmProviderError | undefined;
+  /** Whether a long, server-requested delay has already been waited out. */
+  let waitedLong = false;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     let response: Response;
@@ -162,9 +170,29 @@ export async function postJson(options: PostJsonOptions): Promise<unknown> {
     if (!RETRYABLE_STATUSES.has(response.status)) throw error;
 
     lastError = error;
-    // `detail` is the response body, already read above — it is where Google
-    // puts the retry delay.
-    if (attempt < maxAttempts - 1) await sleep(backoffMs(attempt, response, detail));
+    if (attempt >= maxAttempts - 1) break;
+
+    const wait = backoffMs(attempt, response, detail);
+
+    /**
+     * Honour a long server-requested delay ONCE, then stop.
+     *
+     * The two free-tier quotas need opposite treatment and are told apart only
+     * by a number buried in the message. A per-minute limit clears after one
+     * wait; a daily one does not clear at all, and both ask you to retry in
+     * about forty seconds.
+     *
+     * Waiting repeatedly for the daily one is strictly worse than failing:
+     * measured, a six-case eval against an exhausted key took ten minutes to
+     * report what it could have reported in five seconds. Waiting once
+     * rescues the per-minute case — which is the common one, since an eval
+     * fires its cases back to back — and a second identical refusal is taken
+     * as evidence that waiting is not going to help.
+     */
+    if (waitedLong && wait > SHORT_WAIT_MS) break;
+    if (wait > SHORT_WAIT_MS) waitedLong = true;
+
+    await sleep(wait);
   }
 
   throw lastError ?? new LlmProviderError(`${provider}: request failed`, provider);

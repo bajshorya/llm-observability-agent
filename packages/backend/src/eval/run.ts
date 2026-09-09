@@ -46,6 +46,43 @@ export interface EvalFailure {
   error: string;
 }
 
+/**
+ * Does this failure mean the key is out of quota for the day?
+ *
+ * Free-tier keys have two quotas — five requests per minute and twenty per day
+ * — and both produce a 429 asking you to retry in about forty seconds. The
+ * transport waits once, which rescues the per-minute case. Nothing rescues the
+ * daily one.
+ *
+ * Without this check a run grinds through every remaining case, waiting for a
+ * window that will not open: measured at six minutes to report an exhausted key
+ * that could have been reported in forty seconds. So the first daily-quota
+ * refusal stops the run.
+ *
+ * The two are distinguishable only by the limit named in the message, since
+ * Google reports both against the same metric. Anything above the per-minute
+ * ceiling is treated as the daily one; a genuine per-minute refusal has already
+ * been waited out by the time it reaches here.
+ */
+export function isQuotaExhausted(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes("429")) return false;
+
+  const limit = /limit:\s*(\d+)/.exec(message);
+  return limit?.[1] !== undefined && Number(limit[1]) > 5;
+}
+
+/** Remaining cases, recorded as skipped rather than silently dropped. */
+export function skipRemaining(
+  cases: readonly { name: string }[],
+  fromIndex: number,
+): EvalFailure[] {
+  return cases.slice(fromIndex).map((c) => ({
+    name: c.name,
+    error: "skipped — the daily quota was exhausted earlier in this run",
+  }));
+}
+
 export interface EvalRun {
   provider: string;
   model: string;
@@ -62,7 +99,7 @@ export async function runEval(
   const scores: CaseScore[] = [];
   const failures: EvalFailure[] = [];
 
-  for (const golden of cases) {
+  for (const [index, golden] of cases.entries()) {
     try {
       const { value, stats } = await generateStructured({
         provider,
@@ -94,6 +131,16 @@ export async function runEval(
         name: golden.name,
         error: error instanceof Error ? error.message : String(error),
       });
+
+      /**
+       * A daily-quota refusal will not clear, so grinding through the rest
+       * costs minutes to learn nothing. The remaining cases are recorded as
+       * skipped rather than dropped, so the count still adds up.
+       */
+      if (isQuotaExhausted(error)) {
+        failures.push(...skipRemaining(cases, index + 1));
+        break;
+      }
     }
   }
 
