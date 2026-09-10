@@ -190,7 +190,24 @@ export async function postJson(options: PostJsonOptions): Promise<unknown> {
      * as evidence that waiting is not going to help.
      */
     if (waitedLong && wait > SHORT_WAIT_MS) break;
-    if (wait > SHORT_WAIT_MS) waitedLong = true;
+
+    if (wait > SHORT_WAIT_MS) {
+      waitedLong = true;
+      /**
+       * Announced, because otherwise it is invisible.
+       *
+       * A rate-limit wait is the difference between a run taking forty seconds
+       * and taking ninety, and with no output the only evidence is arithmetic
+       * on the mean latency afterwards. That is exactly how this path was
+       * confirmed the first time, and nobody should have to do that twice.
+       *
+       * On stderr so it never pollutes piped stdout.
+       */
+      console.warn(
+        `  ${provider}: rate limited, waiting ${Math.round(wait / 1000)}s as asked ` +
+          `(this happens once per request; a repeat is treated as exhausted)`,
+      );
+    }
 
     await sleep(wait);
   }
