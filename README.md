@@ -31,6 +31,10 @@ later one wins — `START-HERE.md` lists the known cases.
 
 ---
 
+> **New here?** `HOW-IT-WORKS.md` is a plain walkthrough of what the system
+> does, step by step, with the real input and output of every stage taken from
+> one actual run. It assumes nothing.
+
 ## Status
 
 | Phase | Scope | State |
