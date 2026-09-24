@@ -33,8 +33,7 @@ fixtures/orders-api/
 next-env.d.ts
 
 # Working documentation — kept on disk, out of the repository.
-# README.md and observability-agent-architecture.md are the exceptions and stay
-# tracked; the negations below must come after the blanket rule to take effect.
+# README.md is the only exception and stays tracked; the negation below must
+# come after the blanket rule to take effect.
 *.md
 !README.md
-!observability-agent-architecture.md
