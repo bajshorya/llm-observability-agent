@@ -37,10 +37,11 @@
  * extended. Without this a ten-minute outage would produce a wall of
  * near-identical rows — and one duplicated LLM call for each of them.
  *
- * Anomalies with status `open` OR `dismissed` are mergeable. Dismissed is
- * included because Tier 2 dismisses benign patterns and the traffic that
- * produced them usually continues; without it, every subsequent run would buy
- * another model call to reach the same verdict.
+ * Anomalies with status `open`, `dismissed`, `correlated` or `diagnosed` are
+ * mergeable — anything but `resolved`. Dismissed is included because Tier 2
+ * dismisses benign patterns and the traffic that produced them usually
+ * continues; without it, every subsequent run would buy another model call to
+ * reach the same verdict. The latter two, for the reason at MERGEABLE_STATUSES.
  *
  * With one guard: folding into a DISMISSED anomaly is only safe while nothing
  * new has happened. A trigger kind that was not part of what the classifier
@@ -238,8 +239,20 @@ function mergeTriggers(
  * going. Without this, every subsequent run would create a fresh anomaly for
  * a pattern already judged benign, and each one would buy another LLM call to
  * reach the same verdict.
+ *
+ * `correlated` and `diagnosed` are here for the same reason, one stage later.
+ * They were once absent, which was invisible while each stage was run by hand
+ * and severe once `pnpm watch` ran them on a loop: an incident still firing
+ * after correlation opened a NEW anomaly every tick, and each new row was
+ * classified, correlated and alerted on again — one ongoing outage paging
+ * every thirty seconds and spending a model call each time. An incident that
+ * keeps firing is the same incident; its verdict, commit and hypothesis stay
+ * attached to the row it is folded into.
+ *
+ * `resolved` is deliberately absent: a recurrence after someone has closed an
+ * incident is a new incident and earns a fresh look.
  */
-const MERGEABLE_STATUSES = ["open", "dismissed"] as const;
+const MERGEABLE_STATUSES = ["open", "dismissed", "correlated", "diagnosed"] as const;
 
 /**
  * Persist a firing window.
