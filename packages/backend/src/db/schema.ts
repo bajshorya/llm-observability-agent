@@ -119,6 +119,11 @@ export const anomalies = sqliteTable(
   "anomalies",
   {
     id: id(),
+    /**
+     * When Tier 1 LAST fired on this anomaly, not when it first did: the
+     * engine refreshes it on every merge, which is what keeps an ongoing
+     * incident inside alerting's lookback. `windowStart` is when it began.
+     */
     detectedAt: integer("detected_at", { mode: "timestamp_ms" }).notNull(),
     windowStart: integer("window_start", { mode: "timestamp_ms" }).notNull(),
     windowEnd: integer("window_end", { mode: "timestamp_ms" }).notNull(),

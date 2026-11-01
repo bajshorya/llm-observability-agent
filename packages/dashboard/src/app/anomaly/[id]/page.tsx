@@ -81,7 +81,7 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
       <header className="site">
         <h1>{anomaly.service}</h1>
         <p>
-          {formatWindow(anomaly.windowStart, anomaly.windowEnd)} · detected {formatAge(anomaly.detectedAt)} ·{" "}
+          {formatWindow(anomaly.windowStart, anomaly.windowEnd)} · last fired {formatAge(anomaly.detectedAt)} ·{" "}
           <code className="mono">{anomaly.id.slice(0, 8)}</code>
         </p>
       </header>

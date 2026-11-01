@@ -143,7 +143,7 @@ export default async function TimelinePage({
             </select>
           </label>
           <label>
-            <span>Detected</span>
+            <span>Last fired</span>
             <select name="since" defaultValue={filters.since}>
               {(Object.keys(sinceOptions) as (keyof typeof sinceOptions)[]).map((key) => (
                 <option key={key} value={key}>{sinceLabels[key]}</option>
@@ -201,7 +201,9 @@ pnpm watch --once --classify                  # detect, classify, alert`}</pre>
                     {dismissed ? "dismissed" : (row.severity ?? "unclassified")}
                   </span>
                   <span className="tag">{formatWindow(row.windowStart, row.windowEnd)}</span>
-                  <span className="when">{formatAge(row.detectedAt)}</span>
+                  <span className="when" title="When Tier 1 last fired on it. The window shows when it began.">
+                    last fired {formatAge(row.detectedAt)}
+                  </span>
                 </div>
 
                 <div className="body">
