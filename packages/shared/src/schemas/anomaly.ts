@@ -29,6 +29,8 @@
  *   latency_jump         which percentile, observed, baseline, ratio.
  *   new_error_signature  the normalised signature, a raw sample message a
  *                        human can actually read, and occurrence count.
+ *   service_silent       when the service was last heard from, for how long
+ *                        it has been quiet, and the rate it normally runs at.
  *
  * Because it is discriminated, `switch (trigger.kind)` is exhaustively checked
  * by TypeScript — adding a fourth detector will fail compilation everywhere
@@ -87,10 +89,33 @@ export const newErrorSignatureTriggerSchema = z.object({
   occurrences: z.number().int().positive(),
 });
 
+/**
+ * A service that was logging steadily has stopped logging altogether.
+ *
+ * The one detector measured against the WALL CLOCK rather than against the
+ * latest data. Every other detector anchors its window to the newest rollup,
+ * which is exactly why they cannot see this: a dead service produces no newest
+ * rollup, so the window freezes on the last healthy minute and reports "clean"
+ * forever. A dead service is arguably the worst incident there is.
+ *
+ * There are no words to read in silence, so this trigger on its own is never
+ * sent to the classifier — see `classification/classify.ts`.
+ */
+export const serviceSilentTriggerSchema = z.object({
+  kind: z.literal("service_silent"),
+  service: z.string(),
+  /** ISO-8601. The last log line received from the service. */
+  lastSeenAt: z.string(),
+  silentMinutes: z.number().nonnegative(),
+  /** Log lines per minute in the hour before it went quiet — what makes quiet abnormal. */
+  baselineLinesPerMinute: z.number().nonnegative(),
+});
+
 export const anomalyTriggerSchema = z.discriminatedUnion("kind", [
   errorRateSpikeTriggerSchema,
   latencyJumpTriggerSchema,
   newErrorSignatureTriggerSchema,
+  serviceSilentTriggerSchema,
 ]);
 
 export type AnomalyTrigger = z.infer<typeof anomalyTriggerSchema>;

@@ -280,6 +280,11 @@ export function describeTrigger(trigger: AnomalyTrigger): string {
         `new_error_signature: "${trigger.signature}" occurred ${trigger.occurrences} times ` +
         `and appears nowhere in the baseline hour`
       );
+    case "service_silent":
+      return (
+        `service_silent: no log lines for ${trigger.silentMinutes} minutes since ${trigger.lastSeenAt}, ` +
+        `against a normal rate of ${trigger.baselineLinesPerMinute} log lines/min`
+      );
   }
 }
 

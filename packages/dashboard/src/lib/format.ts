@@ -47,6 +47,8 @@ export function describeTrigger(trigger: AnomalyTrigger): string {
       return `${trigger.metric} ${trigger.observedMs}ms against a baseline of ${trigger.baselineMs}ms (${trigger.ratio}x)`;
     case "new_error_signature":
       return `"${trigger.signature}" ×${trigger.occurrences}, absent from the baseline hour`;
+    case "service_silent":
+      return `silent for ${trigger.silentMinutes} min since ${trigger.lastSeenAt.replace("T", " ").slice(0, 16)}Z; normally ${trigger.baselineLinesPerMinute} lines/min`;
   }
 }
 

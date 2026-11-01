@@ -104,6 +104,39 @@ export const detectionConfig = {
   },
 
   /**
+   * The silence detector — the only one judged against the wall clock.
+   *
+   * Ratio and floor again, in this detector's terms: the gap must be long
+   * enough to be more than a quiet patch (`minSilentMinutes`), AND the service
+   * must normally be busy enough that a gap of that length is abnormal
+   * (`minBaselineLinesPerMinute`). A cron-like service logging twice an hour
+   * is silent for 29 minutes of every 30 and that is its normal.
+   */
+  silence: {
+    /**
+     * Five minutes matches the detection window: a service that has said
+     * nothing for a whole window has not merely had a slow minute.
+     */
+    minSilentMinutes: 5,
+    /**
+     * At 5 lines/min, five silent minutes means ~25 expected lines are missing —
+     * the chance of that by luck on a Poisson-ish source is negligible. Below
+     * it, gaps are normal and this detector would cry wolf.
+     */
+    minBaselineLinesPerMinute: 5,
+    /** How much history before the last line defines "normally busy". */
+    baselineMinutes: 60,
+    /**
+     * Services last heard from longer ago than this are not considered at all.
+     * Without it, every service in an old database — a demo run from last
+     * month, a decommissioned service — would raise a silence alarm the first
+     * time detection runs. Also what keeps the pinned-time golden captures
+     * from ever tripping it: their data is months in the past.
+     */
+    maxLookbackMinutes: 180,
+  },
+
+  /**
    * A sustained incident produces a firing window on every run. Rather than
    * creating a new anomaly each time, an existing open anomaly whose window
    * ended within this many minutes is extended instead.

@@ -33,6 +33,12 @@
  *     When several novel signatures appear at once the most frequent is
  *     reported; the rest stay visible in the anomaly's log window.
  *
+ *   detectSilence  (separate entry point, not part of `runDetectors`)
+ *     A normally busy service has sent nothing for a whole window. The only
+ *     detector judged against NOW rather than the newest data, because a dead
+ *     service produces no newest data — the others freeze on its last healthy
+ *     minute and report clean. `now` is passed in, so it is still pure.
+ *
  * SHARED STRUCTURE
  * Every detector checks its absolute floor FIRST — it is the cheapest test and
  * rejects the noisiest case — then the relative threshold, then builds a
@@ -208,4 +214,48 @@ export function runDetectors(
     detectLatencyJump(window, baseline, config),
     detectNewErrorSignature(window, baseline, config),
   ].filter((trigger): trigger is AnomalyTrigger => trigger !== null);
+}
+
+/** What the silence detector needs about one service. Plain values, no clock. */
+export interface SilenceInput {
+  service: string;
+  /** Timestamp of the newest log line received from the service. */
+  lastSeenAt: Date;
+  /** Log lines per minute in the `silence.baselineMinutes` before `lastSeenAt`. */
+  baselineLinesPerMinute: number;
+}
+
+/**
+ * Fires when a normally busy service has stopped logging.
+ *
+ * Kept OUT of `runDetectors` deliberately. The other three compare a window
+ * against a baseline, and both are anchored to the newest data; this one
+ * compares the newest data against NOW, which is the only way to see an
+ * absence. `now` is a parameter, so the function stays pure and testable —
+ * the engine is the only place that reads the clock.
+ *
+ * Three gates, in order of cost:
+ *   - heard from too long ago      → out of scope (old database, retired service)
+ *   - quiet for less than a window → not silence, just a gap
+ *   - normally sends little        → gaps are normal for it; not abnormal
+ */
+export function detectSilence(
+  input: SilenceInput,
+  now: Date,
+  config: DetectionConfig,
+): AnomalyTrigger | null {
+  const silentMs = now.getTime() - input.lastSeenAt.getTime();
+  const silentMinutes = silentMs / 60_000;
+
+  if (silentMinutes > config.silence.maxLookbackMinutes) return null;
+  if (silentMinutes < config.silence.minSilentMinutes) return null;
+  if (input.baselineLinesPerMinute < config.silence.minBaselineLinesPerMinute) return null;
+
+  return {
+    kind: "service_silent",
+    service: input.service,
+    lastSeenAt: input.lastSeenAt.toISOString(),
+    silentMinutes: Math.floor(silentMinutes),
+    baselineLinesPerMinute: Number(input.baselineLinesPerMinute.toFixed(1)),
+  };
 }

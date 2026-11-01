@@ -77,6 +77,11 @@ function describeTrigger(trigger: AnomalyTrigger): string {
         `new_error_signature  "${trigger.signature}" x${trigger.occurrences}\n` +
         `                       sample: ${trigger.sampleMessage}`
       );
+    case "service_silent":
+      return (
+        `service_silent       nothing for ${trigger.silentMinutes} min (last seen ` +
+        `${trigger.lastSeenAt}); normally ${trigger.baselineLinesPerMinute} lines/min`
+      );
   }
 }
 
@@ -158,6 +163,7 @@ async function runOnce({ rollupOnly, detectOnly, classify }: RunOptions): Promis
   }
 
   for (const service of detection.services) reportService(service);
+  for (const service of detection.silent) reportService(service);
 
   if (classify) await runClassification();
 }

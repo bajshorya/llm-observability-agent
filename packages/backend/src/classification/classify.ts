@@ -142,6 +142,22 @@ interface PendingAnomaly {
   triggers: ClassificationInput["triggers"];
 }
 
+/**
+ * At least one trigger that is not `service_silent`.
+ *
+ * An anomaly whose only signal is silence has nothing in it to read — no log
+ * lines in the window, by definition — so a model call would spend quota to
+ * restate the detector. Those rows stay unclassified, which is honest: no
+ * model judged them. Alerting handles them directly from Tier 1 instead.
+ *
+ * Done in SQL rather than after the query so that a run of silent rows cannot
+ * fill the per-run limit and starve the anomalies that do need reading.
+ */
+const hasReadableTrigger = sql`exists (
+  select 1 from json_each(${anomalies.triggers})
+  where json_extract(json_each.value, '$.kind') != 'service_silent'
+)`;
+
 async function loadPending(options: ClassifyOptions): Promise<PendingAnomaly[]> {
   const columns = {
     id: anomalies.id,
@@ -164,7 +180,7 @@ async function loadPending(options: ClassifyOptions): Promise<PendingAnomaly[]> 
   return db
     .select(columns)
     .from(anomalies)
-    .where(isNull(anomalies.severity))
+    .where(and(isNull(anomalies.severity), hasReadableTrigger))
     .orderBy(asc(anomalies.detectedAt))
     .limit(options.limit ?? 10);
 }

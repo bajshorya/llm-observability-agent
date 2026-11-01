@@ -67,6 +67,9 @@ const TRIGGER_WEIGHTS: Record<TriggerKind, number> = {
   new_error_signature: 2,
   error_rate_spike: 2,
   latency_jump: 1,
+  // Never reaches the classifier on its own (there is nothing to read), but a
+  // service that errored and then went quiet is strong evidence of breakage.
+  service_silent: 2,
 };
 
 /** Marker lines the context renderer emits. See classification/context.ts. */

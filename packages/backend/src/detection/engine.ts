@@ -48,18 +48,24 @@
  * earns its own verdict — otherwise a real incident beginning shortly after a
  * benign one would silently inherit the dismissal and never be looked at.
  *
+ * SILENCE IS A SEPARATE PASS
+ * After the per-service loop, `runSilenceDetection` asks how long since each
+ * service was last heard from, against the WALL CLOCK. It is the only part of
+ * Tier 1 that reads the clock, and the reason is in its own comment.
+ *
  * WHAT IT DELIBERATELY LEAVES EMPTY
  * `severity`, `summary` and `is_real_incident` are written as NULL. They belong
  * to Tier 2, and an anomaly is a complete, valid record without them — that is
  * the handoff contract between the tiers.
  */
 
-import { and, desc, eq, gte, inArray, isNotNull, lt, max } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, lt, lte, max } from "drizzle-orm";
 import type { AnomalyTrigger } from "@obs/shared";
 import { db } from "../db/client";
 import { anomalies, logs, metricsRollup } from "../db/schema";
 import { detectionConfig, type DetectionConfig } from "./config";
 import {
+  detectSilence,
   runDetectors,
   type BaselineStats,
   type SignatureOccurrence,
@@ -88,6 +94,8 @@ export interface DetectionRunResult {
   windowStart: Date;
   windowEnd: Date;
   services: ServiceDetectionResult[];
+  /** Services that have gone quiet. Judged against the wall clock — see below. */
+  silent: ServiceDetectionResult[];
 }
 
 function floorToMinute(ms: number): number {
@@ -319,7 +327,7 @@ async function persistAnomaly(
  * disagree about where "now" is.
  */
 export async function runDetection(
-  options: { config?: DetectionConfig; now?: Date } = {},
+  options: { config?: DetectionConfig; now?: Date; skipSilence?: boolean } = {},
 ): Promise<DetectionRunResult> {
   const config = options.config ?? detectionConfig;
 
@@ -386,5 +394,88 @@ export async function runDetection(
     results.push({ service, windowStart, windowEnd, triggers, action, anomalyId });
   }
 
-  return { windowStart, windowEnd, services: results };
+  const silent = options.skipSilence
+    ? []
+    : await runSilenceDetection(options.now ?? new Date(), config);
+
+  return { windowStart, windowEnd, services: results, silent };
+}
+
+/**
+ * The silence pass — the one place detection reads the wall clock.
+ *
+ * Everything above anchors to the newest rollup, so that detection and the
+ * rollup worker agree about "now". That is exactly what makes silence
+ * invisible to it: a dead service writes no newest rollup, so its window
+ * freezes on the last healthy minute and reports clean forever. This pass asks
+ * the opposite question — how long since each service was last heard from —
+ * and hands plain values to the pure `detectSilence`.
+ *
+ * It reads the raw log table rather than rollups, for the same reason
+ * classification does: the rollup worker can lag, and a stale rollup would
+ * read as a silent service.
+ *
+ * A silence anomaly goes through the same merge rule as any other, so a
+ * service that threw errors and then died extends the incident already open
+ * for it rather than opening a second one, and a sustained outage is one row
+ * however many times the loop runs.
+ */
+async function runSilenceDetection(
+  now: Date,
+  config: DetectionConfig,
+): Promise<ServiceDetectionResult[]> {
+  const lookbackStart = new Date(now.getTime() - config.silence.maxLookbackMinutes * MINUTE_MS);
+
+  const lastSeenRows = await db
+    .select({ service: logs.service, lastSeenAt: max(logs.timestamp) })
+    .from(logs)
+    .where(gte(logs.timestamp, lookbackStart))
+    .groupBy(logs.service);
+
+  const results: ServiceDetectionResult[] = [];
+
+  for (const { service, lastSeenAt } of lastSeenRows) {
+    if (!lastSeenAt) continue;
+
+    const baselineStart = new Date(
+      lastSeenAt.getTime() - config.silence.baselineMinutes * MINUTE_MS,
+    );
+    const [baseline] = await db
+      .select({ n: count() })
+      .from(logs)
+      .where(
+        and(
+          eq(logs.service, service),
+          gte(logs.timestamp, baselineStart),
+          lte(logs.timestamp, lastSeenAt),
+        ),
+      );
+
+    const trigger = detectSilence(
+      {
+        service,
+        lastSeenAt,
+        baselineLinesPerMinute: (baseline?.n ?? 0) / config.silence.baselineMinutes,
+      },
+      now,
+      config,
+    );
+
+    if (!trigger) continue;
+
+    // The window is the silence itself: from the last line to now.
+    const windowStart = new Date(floorToMinute(lastSeenAt.getTime()));
+    const windowEnd = new Date(floorToMinute(now.getTime()));
+    const { action, anomalyId } = await persistAnomaly(
+      service,
+      windowStart,
+      windowEnd,
+      [trigger],
+      config,
+    );
+
+    results.push({ service, windowStart, windowEnd, triggers: [trigger], action, anomalyId });
+  }
+
+  return results;
 }
