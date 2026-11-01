@@ -148,7 +148,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 265 unit tests; 34 of them over the detectors and stats
+pnpm test                   # 269 unit tests; 34 of them over the detectors and stats
 ```
 
 A firing window looks like this:
@@ -391,6 +391,13 @@ day's spend between each, so the cap can be overshot only by the schema repairs
 of the last call (at most 2). The default of 15 leaves headroom under Gemini's
 free 20/day. The stub and Ollama are local and not budgeted.
 
+An anomaly that keeps failing a stage (a missing repository, a packet a model
+cannot answer) is passed over with exponential backoff, up to an hour, so it
+cannot block the ones behind it. Output is news only: a tick prints when
+something new happened, and quiet ticks print a heartbeat every ten minutes.
+Ctrl-C and SIGTERM (`docker stop`, systemd) finish the current tick and exit;
+a second signal exits at once.
+
 ### Alerting — only what Tier 2 judged real, plus silence
 
 ```bash
@@ -422,6 +429,9 @@ service averaging at least 5 lines/min has said nothing for 5 minutes, and
 ignores services last heard from more than 3 hours ago (so an old database or a
 pinned-time capture never trips it). Silence has nothing in it for a model to
 read, so a silence-only anomaly is never classified — it alerts from Tier 1.
+Once a service is silent, the other three detectors skip it: its last five
+minutes of data will never change, and re-judging them kept a dead service's
+incident "firing" on every run.
 
 ### `@obs/client` — sending logs from a real service
 
@@ -501,7 +511,7 @@ an API key. In rough order of cost.
 ```bash
 pnpm install
 pnpm typecheck                  # strict TS across five packages
-pnpm test                       # 265 unit tests, ~1s, no network
+pnpm test                       # 269 unit tests, ~1s, no network
 bash scripts/demo.sh            # the whole pipeline end to end
 ```
 
@@ -841,7 +851,7 @@ pnpm eval --diagnosis                 # score the Phase 4 set
 
 bash scripts/build-fixture-repo.sh    # the repo correlation reads
 
-pnpm test                 # 265 unit tests, no network required
+pnpm test                 # 269 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
   WHERE error_signature IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;"
