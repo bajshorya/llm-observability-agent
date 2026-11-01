@@ -45,6 +45,7 @@ later one wins — `START-HERE.md` lists the known cases.
 | **3** | Commit correlation agent | ✅ Done |
 | **4** | Root-cause + fix agent (human-gated) | ✅ Done |
 | **5** | Next.js dashboard with reasoning trace | ✅ Done |
+| **6** | Running it as a product: `pnpm watch`, alerting, silence detection, `@obs/client`, charts, filters, cost page | ✅ Done |
 
 Phase 3 is measured on a six-case set — four of them declines, for four
 different reasons. `gemini-2.5-flash` scores 2/2 and 4/4 against a
@@ -147,7 +148,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 197 unit tests; 27 of them over the detectors and stats
+pnpm test                   # 265 unit tests; 34 of them over the detectors and stats
 ```
 
 A firing window looks like this:
@@ -369,6 +370,79 @@ a human decides.
 
 ---
 
+## Running it continuously
+
+Every stage above is a command you run. These four pieces turn that into
+something you can point a service at and leave running.
+
+### `pnpm watch` — the pipeline on a loop, with a stated spending limit
+
+```bash
+pnpm watch                          # free: detection (incl. silence) + alerts, every 30s
+pnpm watch --classify               # also Tier 2 on anything new
+pnpm watch --llm --budget 15        # classify, correlate and diagnose, ≤15 requests/day
+pnpm watch --once --llm             # one tick, then exit
+```
+
+A bare `watch` never calls a model. Each paid stage is a flag, and `--budget`
+caps model requests per UTC day across all of them — counted from `llm_calls`,
+so a restart does not reset it. Stages run one anomaly at a time and re-read the
+day's spend between each, so the cap can be overshot only by the schema repairs
+of the last call (at most 2). The default of 15 leaves headroom under Gemini's
+free 20/day. The stub and Ollama are local and not budgeted.
+
+### Alerting — only what Tier 2 judged real, plus silence
+
+```bash
+pnpm alert --dry-run                # what would be sent; sends and records nothing
+pnpm alert                          # send what is due (watch does this every tick)
+```
+
+| Variable | Default | |
+|---|---|---|
+| `SLACK_WEBHOOK_URL` | — | Slack incoming webhook |
+| `ALERT_WEBHOOK_URL` | — | any endpoint taking a JSON POST |
+| `ALERT_MIN_SEVERITY` | `high` | lowest Tier 2 severity that pages |
+| `DASHBOARD_URL` | `http://localhost:3000` | where alert links point |
+
+With neither URL set, alerts print to stdout. Two reasons page, and only two: a
+**real incident** at or above the threshold, and a **silent service**. Raw Tier 1
+firings never do — a deploy restart trips the same detectors as an outage, and
+the classifier is what keeps it off your phone. Every attempt is a row in
+`alerts`; a success is never repeated, a failing webhook is retried up to three
+times, and only anomalies from the last six hours are considered, so adding a
+webhook to an old database does not replay its history.
+
+### Silence detection — the fourth detector
+
+A service that stops logging used to freeze detection rather than raise it: every
+detector anchors to the newest data, and a dead service writes none.
+`service_silent` is judged against the wall clock instead. It fires when a
+service averaging at least 5 lines/min has said nothing for 5 minutes, and
+ignores services last heard from more than 3 hours ago (so an old database or a
+pinned-time capture never trips it). Silence has nothing in it for a model to
+read, so a silence-only anomaly is never classified — it alerts from Tier 1.
+
+### `@obs/client` — sending logs from a real service
+
+```ts
+import { createObsClient, obsMiddleware } from "@obs/client";
+
+const obs = createObsClient({ url: "http://localhost:4000/ingest", service: "orders-api" });
+app.use(obsMiddleware(obs));                     // one line per request: method, route, status, latency
+obs.error("Payment declined", { endpoint: "/checkout", statusCode: 502 });
+process.on("SIGTERM", () => obs.close());        // flush on shutdown
+```
+
+Batched, bounded and never-throwing: entries are validated against the same
+schema the server uses before they are queued, the queue drops its oldest
+entries when full, 5xx/429/network errors are retried with backoff and then
+dropped, and the flush timer never holds a process open. Raw paths are
+templated (`/orders/12778` → `/orders/:id`) so per-endpoint rollups do not
+explode. There is no disk spool: what is queued when a process dies is lost.
+
+---
+
 ## Dashboard (Phase 5)
 
 Everything above produces rows in SQLite that only a `pnpm` command can see.
@@ -378,20 +452,28 @@ This makes it a URL.
 pnpm dashboard        # localhost:3000, reads DATABASE_URL like every other command
 ```
 
-Two pages. `/` is the timeline — every anomaly newest first, severity in the
-left border, with the funnel across the top: raised, classified, real,
-correlated. Dismissed windows stay in the list, because they are the evidence
-that the expensive tier does something.
+Three pages. `/` is the timeline — every anomaly newest first, severity in the
+left border, an errors-per-minute sparkline with the window shaded, and the
+funnel across the top: raised, classified, real, correlated. Dismissed windows
+stay in the list by default, because they are the evidence that the expensive
+tier does something. Filters — service, verdict (incl. "service went silent"),
+severity, status, time range, free text — are a plain GET form, so a filtered
+view is a shareable link.
+
+`/costs` is where the model budget went: requests (counted as the provider
+counts them, repairs included), tokens, failure rate, requests per day, and
+today's spend per provider and model against the known free-tier cap.
 
 `/anomaly/[id]` is the reasoning trace, and it is the point. Five panels in
 pipeline order:
 
 | Panel | Shows |
 |---|---|
-| What the statistics found | each trigger with its own numbers — observed, baseline, z-score — plus raw log lines |
+| What the statistics found | each trigger with its own numbers — observed, baseline, z-score — errors/min and p95 charts against the hour before, and raw log lines |
 | What the model judged | verdict, severity, affected area, summary |
 | **What the model was actually shown** | the evidence packet, **verbatim** |
 | Which commit explains it | sha, confidence, reasoning, implicated files — or a stated `null` |
+| Who was told | every alert attempt: reason, channel, sent or failed |
 | What it cost | every model call, including the ones that failed |
 
 The packet panel is `pnpm classify --preview <id>` with a URL. It is rebuilt at
@@ -418,8 +500,8 @@ an API key. In rough order of cost.
 
 ```bash
 pnpm install
-pnpm typecheck                  # strict TS across four packages
-pnpm test                       # 197 unit tests, ~300ms, no network
+pnpm typecheck                  # strict TS across five packages
+pnpm test                       # 265 unit tests, ~1s, no network
 bash scripts/demo.sh            # the whole pipeline end to end
 ```
 
@@ -646,6 +728,8 @@ packages/
                (src/classification), commit correlation (src/correlation)
                and the golden-set evals (src/eval).
   generator/   Synthetic traffic with on-command anomaly injection.
+  client/      @obs/client — a batching log shipper and request middleware
+               for real services.
 
 scripts/       capture-cases.sh rebuilds the golden set from real runs.
                build-fixture-repo.sh builds the repository correlation reads.
@@ -730,6 +814,7 @@ mean less.
 | `correlations` | Suspected commit, confidence, reasoning, implicated files. A **null** sha is still a row — "considered and declined" is a finding, and it must stay distinguishable from "never ran". |
 | `hypotheses` | Root cause, suggested fix, and whether the diff explains the failure at all. `applied` stays `false` — human gate, and no code writes it. |
 | `llm_calls` | Tokens and latency per call. This is what substantiates the two-tier cost claim. |
+| `alerts` | One row per alert attempt per channel. A success means never again; failures are retried up to three times. |
 
 ---
 
@@ -746,13 +831,17 @@ pnpm diagnose --stats     # the diagnosis funnel
 
 pnpm dashboard            # the timeline and reasoning trace on :3000
 
+pnpm watch                # detection + alerts on a loop, no model calls
+pnpm watch --llm          # every stage, capped by --budget (default 15/day)
+pnpm alert --dry-run      # what would be sent, sending nothing
+
 pnpm eval --correlation               # score the correlation set
 pnpm eval --correlation --provider stub   # the blame-the-newest baseline
 pnpm eval --diagnosis                 # score the Phase 4 set
 
 bash scripts/build-fixture-repo.sh    # the repo correlation reads
 
-pnpm test                 # 197 unit tests, no network required
+pnpm test                 # 265 unit tests, no network required
 pnpm db:studio            # browse the database
 sqlite3 data/dev.db "SELECT error_signature, COUNT(*) FROM logs \
   WHERE error_signature IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;"
