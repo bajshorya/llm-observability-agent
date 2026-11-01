@@ -205,16 +205,37 @@ async function main(): Promise<void> {
   }
 
   console.log(`Watching every ${intervalSec}s. Ctrl-C to stop.\n`);
+
+  // Same shutdown contract as `pnpm watch`: SIGINT or SIGTERM ends the loop
+  // after the current run, a second signal exits at once, and the sleep timer
+  // is cleared so the process does not linger for an interval after stopping.
   let running = true;
-  process.on("SIGINT", () => {
+  let wake: (() => void) | null = null;
+  const stop = (signal: NodeJS.Signals) => {
+    if (!running) process.exit(signal === "SIGINT" ? 130 : 143);
     running = false;
-    console.log("\nStopping.");
-  });
+    console.log(`\n${signal} — stopping.`);
+    wake?.();
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
 
   while (running) {
-    await runOnce(options);
+    try {
+      await runOnce(options);
+    } catch (error) {
+      // One failed run (a locked database, say) must not end a watch.
+      console.log(`run failed — ${error instanceof Error ? error.message : error}`);
+    }
     console.log("");
-    await new Promise((resolve) => setTimeout(resolve, intervalSec * 1000));
+    if (!running) break;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, intervalSec * 1000);
+      wake = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
   }
 }
 

@@ -82,6 +82,11 @@ export interface DiagnoseOptions {
   /** Cap per run, so a backlog cannot empty a free-tier quota in one go. */
   limit?: number | undefined;
   anomalyId?: string | undefined;
+  /**
+   * Anomalies to pass over this run. `pnpm watch` uses it to back off one that
+   * keeps failing, so it cannot hold up every row queued behind it.
+   */
+  excludeIds?: readonly string[] | undefined;
   repoPath?: string | undefined;
 }
 
@@ -143,6 +148,7 @@ async function loadPending(options: DiagnoseOptions): Promise<PendingDiagnosis[]
         // from. See the header on why that is a scoping decision.
         sql`${correlations.suspectedCommitSha} is not null`,
         notInArray(anomalies.id, alreadyDiagnosed),
+        options.excludeIds?.length ? notInArray(anomalies.id, [...options.excludeIds]) : undefined,
       ),
     )
     .orderBy(asc(anomalies.detectedAt))

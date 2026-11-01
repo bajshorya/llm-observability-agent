@@ -117,6 +117,11 @@ export interface CorrelateOptions {
   limit?: number | undefined;
   /** Correlate one specific anomaly, even if already correlated. */
   anomalyId?: string | undefined;
+  /**
+   * Anomalies to pass over this run. `pnpm watch` uses it to back off one that
+   * keeps failing, so it cannot hold up every row queued behind it.
+   */
+  excludeIds?: readonly string[] | undefined;
   lookbackHours?: number | undefined;
   maxCommits?: number | undefined;
   repoPath?: string | undefined;
@@ -167,6 +172,7 @@ async function loadPending(options: CorrelateOptions): Promise<PendingIncident[]
       and(
         eq(anomalies.isRealIncident, true),
         notInArray(anomalies.id, alreadyCorrelated),
+        options.excludeIds?.length ? notInArray(anomalies.id, [...options.excludeIds]) : undefined,
       ),
     )
     .orderBy(asc(anomalies.detectedAt))

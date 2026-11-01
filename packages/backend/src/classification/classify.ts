@@ -64,7 +64,7 @@
  * it — including the line saying the incident had ended.
  */
 
-import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
 import {
   classificationSchema,
   type Classification,
@@ -132,6 +132,11 @@ export interface ClassifyOptions {
   limit?: number | undefined;
   /** Classify one specific anomaly, even if already classified. */
   anomalyId?: string | undefined;
+  /**
+   * Anomalies to pass over this run. `pnpm watch` uses it to back off one that
+   * keeps failing, so it cannot hold up every row queued behind it.
+   */
+  excludeIds?: readonly string[] | undefined;
 }
 
 interface PendingAnomaly {
@@ -180,7 +185,7 @@ async function loadPending(options: ClassifyOptions): Promise<PendingAnomaly[]> 
   return db
     .select(columns)
     .from(anomalies)
-    .where(and(isNull(anomalies.severity), hasReadableTrigger))
+    .where(and(isNull(anomalies.severity), hasReadableTrigger, options.excludeIds?.length ? notInArray(anomalies.id, [...options.excludeIds]) : undefined))
     .orderBy(asc(anomalies.detectedAt))
     .limit(options.limit ?? 10);
 }
