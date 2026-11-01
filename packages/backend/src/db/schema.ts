@@ -218,6 +218,33 @@ export const llmCalls = sqliteTable(
   (t) => [index("llm_calls_anomaly_idx").on(t.anomalyId)],
 );
 
+/**
+ * One row per alert ATTEMPT, per channel.
+ *
+ * This is what makes alerting idempotent: a successful row for
+ * (anomaly, reason, channel) means that alert is never sent again, however
+ * many times the watch loop runs. Failures are rows too — a webhook that is
+ * down is retried on the next tick, up to a cap, and the cap is counted from
+ * here rather than held in memory, so a restart does not reset it.
+ */
+export const alerts = sqliteTable(
+  "alerts",
+  {
+    id: id(),
+    anomalyId: text("anomaly_id")
+      .notNull()
+      .references(() => anomalies.id, { onDelete: "cascade" }),
+    /** `incident` (Tier 2 judged it real) or `silence` (Tier 1 alone). */
+    reason: text("reason").notNull(),
+    /** `slack`, `webhook` or `console`. */
+    channel: text("channel").notNull(),
+    succeeded: integer("succeeded", { mode: "boolean" }).notNull(),
+    error: text("error"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("alerts_anomaly_idx").on(t.anomalyId)],
+);
+
 export type LogRow = typeof logs.$inferSelect;
 export type NewLogRow = typeof logs.$inferInsert;
 export type AnomalyRow = typeof anomalies.$inferSelect;

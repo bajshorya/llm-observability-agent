@@ -127,6 +127,26 @@ const envSchema = z.object({
    * Turn it on only for a model you have measured yourself.
    * `DOCUMENTATION-EVALS.md` §14.
    */
+  /**
+   * Alerting. Both optional; with neither set, `pnpm alert` and `pnpm watch`
+   * print alerts to stdout instead of sending them, so the loop is observable
+   * before any webhook exists.
+   *
+   *   SLACK_WEBHOOK_URL   a Slack incoming-webhook URL
+   *   ALERT_WEBHOOK_URL   any endpoint that accepts a JSON POST (PagerDuty
+   *                       Events, a Discord bridge, your own service)
+   */
+  SLACK_WEBHOOK_URL: optionalSecret.pipe(z.url().optional()),
+  ALERT_WEBHOOK_URL: optionalSecret.pipe(z.url().optional()),
+  /**
+   * The lowest Tier 2 severity that pages. `high` by default: a medium
+   * incident is worth seeing on the dashboard, not worth waking someone for.
+   * Silence alerts ignore this — no model has rated them.
+   */
+  ALERT_MIN_SEVERITY: z.enum(["low", "medium", "high", "critical"]).default("high"),
+  /** Where alert links point. */
+  DASHBOARD_URL: z.string().default("http://localhost:3000"),
+
   CORRELATION_DIFFS: z
     .enum(["0", "1", "true", "false"])
     .default("0")
