@@ -21,6 +21,15 @@
   --medium: #e3b341;
   --low: #6e9c76;
   --dismissed: #6e7681;
+
+  /*
+   * The one chart series colour. Deliberately not a severity colour: those are
+   * status, and painting an error bar red would claim a verdict the statistics
+   * have not made. Validated against --panel: OKLCH L inside the dark band,
+   * 3:1+ contrast.
+   */
+  --series: #3d8fe6;
+  --band: rgba(230, 237, 243, 0.07);
 }
 
 * { box-sizing: border-box; }
@@ -83,6 +92,12 @@ header.site p { margin: 0; color: var(--muted); font-size: 14px; }
 .row .summary { margin: 6px 0 0; color: var(--text); }
 .row .pending { margin: 6px 0 0; color: var(--muted); font-style: italic; }
 .row .triggers { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.row .body { display: flex; gap: 16px; align-items: flex-end; }
+.row .body .text { flex: 1; min-width: 0; }
+.row .spark { flex: none; }
+@media (max-width: 560px) {
+  .row .spark { display: none; }
+}
 
 .tag {
   font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -151,3 +166,49 @@ table.calls tr:last-child td { border-bottom: none; }
   font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .back { display: inline-block; margin-bottom: 18px; font-size: 14px; }
+
+/* --- nav -------------------------------------------------------------------- */
+nav.top { display: flex; gap: 18px; align-items: baseline; margin-bottom: 22px; font-size: 14px; }
+nav.top .readonly {
+  margin-left: auto; color: var(--muted);
+  font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid var(--border); border-radius: 5px; padding: 4px 7px;
+}
+
+/* --- filters: one row above the list, wraps on narrow screens --------------- */
+form.filters {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+  margin: 0 0 18px;
+}
+form.filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+form.filters label.grow { flex: 1 1 180px; }
+form.filters select,
+form.filters input,
+form.filters button {
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; font: 13px/1.2 inherit; font-family: inherit;
+}
+form.filters input { width: 100%; }
+form.filters button { cursor: pointer; }
+form.filters button:hover { border-color: #3d4756; }
+form.filters .actions { display: flex; gap: 12px; align-items: center; font-size: 13px; }
+p.count { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+
+/* --- charts ----------------------------------------------------------------- */
+svg .mark { fill: var(--series); }
+svg .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+svg .band { fill: var(--band); }
+svg .axis { stroke: var(--border); stroke-width: 1; }
+svg .grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 4; }
+svg .label { fill: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+svg .hit { fill: transparent; }
+svg .hit:hover { fill: rgba(230, 237, 243, 0.06); }
+
+figure.chart { margin: 0 0 14px; }
+figure.chart figcaption { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+figure.chart svg { display: block; width: 100%; height: auto; }
+
+details.minutes { margin: 4px 0 8px; font-size: 13px; }
+details.minutes summary { cursor: pointer; color: var(--link); }
+details.minutes table { margin-top: 8px; }

@@ -30,14 +30,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { renderContextForAnomaly } from "@obs/backend/src/classification/classify";
+import { chartRange, minuteGrid } from "@/lib/chart";
 import {
+  getAlerts,
   getAnomaly,
   getCorrelation,
   getHypothesis,
   getLlmCalls,
+  getSeries,
   getWindowSample,
 } from "@/lib/queries";
 import { describeTrigger, formatAge, formatWindow, severityClass, tokens } from "@/lib/format";
+import { MetricChart, MinuteTable } from "../../charts";
 
 export const dynamic = "force-dynamic";
 
@@ -46,11 +50,19 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
   const anomaly = await getAnomaly(id);
   if (!anomaly) notFound();
 
-  const [correlation, hypothesis, calls, sample, rendered] = await Promise.all([
+  const range = chartRange(anomaly.windowStart, anomaly.windowEnd, {
+    beforeMinutes: 60,
+    afterMinutes: 15,
+    maxMinutes: 240,
+  });
+
+  const [correlation, hypothesis, calls, sample, alertRows, rollups, rendered] = await Promise.all([
     getCorrelation(anomaly.id),
     getHypothesis(anomaly.id),
     getLlmCalls(anomaly.id),
     getWindowSample(anomaly.service, anomaly.windowStart, anomaly.windowEnd),
+    getAlerts(anomaly.id),
+    getSeries(anomaly.service, range.from, range.to),
     // Rebuilt from the same pure renderer the pipeline uses, so the page cannot
     // show a packet the model never saw.
     renderContextForAnomaly(anomaly.id).catch(() => null),
@@ -58,6 +70,9 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
 
   const band = severityClass(anomaly.severity, anomaly.isRealIncident);
   const dismissed = anomaly.isRealIncident === false;
+  const points = minuteGrid(rollups, range.from, range.to);
+  const window = { start: anomaly.windowStart, end: anomaly.windowEnd };
+  const silentOnly = anomaly.triggers.every((trigger) => trigger.kind === "service_silent");
 
   return (
     <>
@@ -83,6 +98,15 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
           </div>
         ))}
 
+        {points.some((point) => point.requests > 0) && (
+          <>
+            <h3>The window against the hour before it</h3>
+            <MetricChart points={points} measure="errors" window={window} title="Errors per minute" />
+            <MetricChart points={points} measure="p95" window={window} title="p95 latency (ms) — breaks where there was no traffic" />
+            <MinuteTable points={points} window={window} />
+          </>
+        )}
+
         {sample.length > 0 && (
           <>
             <h3>Raw lines from the window</h3>
@@ -104,7 +128,12 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
         <h2>What the model judged</h2>
         <p className="tier">Tier 2 · one call per incident</p>
 
-        {anomaly.severity === null ? (
+        {anomaly.severity === null && silentOnly ? (
+          <p style={{ color: "var(--muted)" }}>
+            Not classified, deliberately. The only signal is silence, and silence has no words in
+            it for a model to read — so this was alerted on from Tier 1 alone.
+          </p>
+        ) : anomaly.severity === null ? (
           <p style={{ color: "var(--muted)" }}>
             Not classified. Tier 1 raised this window and no model has been asked about it —
             run <code className="mono">pnpm classify</code>.
@@ -231,6 +260,40 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
               agent diagnoses; a human decides.
             </p>
           </>
+        )}
+      </section>
+
+      {/* ---- alerts ---------------------------------------------------------- */}
+      <section className="stage">
+        <h2>Who was told</h2>
+        <p className="tier">Alerts · real incidents and silence only</p>
+
+        {alertRows.length === 0 ? (
+          <p style={{ color: "var(--muted)" }}>
+            {dismissed
+              ? "No alert — a window judged benign never pages anyone. That is the point of Tier 2."
+              : "No alert sent. Alerts go to real incidents at or above ALERT_MIN_SEVERITY, and to silence — run `pnpm alert`, or leave `pnpm watch` running."}
+          </p>
+        ) : (
+          <table className="calls">
+            <thead>
+              <tr>
+                <th>When</th><th>Reason</th><th>Channel</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {alertRows.map((alert, i) => (
+                <tr key={i}>
+                  <td>{formatAge(alert.createdAt)}</td>
+                  <td>{alert.reason}</td>
+                  <td>{alert.channel}</td>
+                  <td style={{ color: alert.succeeded ? "var(--low)" : "var(--critical)" }}>
+                    {alert.succeeded ? "sent" : `failed — ${alert.error ?? "unknown"}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
 
