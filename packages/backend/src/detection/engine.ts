@@ -49,10 +49,12 @@
  * earns its own verdict — otherwise a real incident beginning shortly after a
  * benign one would silently inherit the dismissal and never be looked at.
  *
- * SILENCE IS A SEPARATE PASS
- * After the per-service loop, `runSilenceDetection` asks how long since each
+ * SILENCE IS A SEPARATE PASS, AND IT RUNS FIRST
+ * Before the per-service loop, `runSilenceDetection` asks how long since each
  * service was last heard from, against the WALL CLOCK. It is the only part of
- * Tier 1 that reads the clock, and the reason is in its own comment.
+ * Tier 1 that reads the clock, and the reason is in its own comment. A service
+ * it finds silent is skipped by the loop: its window is stale data, and
+ * re-judging it every run kept a dead service's incident "firing" forever.
  *
  * WHAT IT DELIBERATELY LEAVES EMPTY
  * `severity`, `summary` and `is_real_incident` are written as NULL. They belong
@@ -61,7 +63,7 @@
  */
 
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, lte, max } from "drizzle-orm";
-import type { AnomalyTrigger } from "@obs/shared";
+import type { AnomalyTrigger, TriggerKind } from "@obs/shared";
 import { db } from "../db/client";
 import { anomalies, logs, metricsRollup } from "../db/schema";
 import { detectionConfig, type DetectionConfig } from "./config";
@@ -87,6 +89,13 @@ export interface ServiceDetectionResult {
   triggers: AnomalyTrigger[];
   action: DetectionAction;
   anomalyId: string | null;
+  /**
+   * Trigger kinds this run added to the anomaly — all of them on `created`,
+   * only the new ones on `extended`, none otherwise. An extension that adds
+   * nothing is the same incident still firing; callers that print every tick
+   * use this to stay quiet about it.
+   */
+  addedKinds: TriggerKind[];
   /** Set when detection was skipped rather than simply finding nothing. */
   skippedReason?: string;
 }
@@ -268,7 +277,7 @@ async function persistAnomaly(
   windowEnd: Date,
   triggers: AnomalyTrigger[],
   config: DetectionConfig,
-): Promise<{ action: DetectionAction; anomalyId: string }> {
+): Promise<{ action: DetectionAction; anomalyId: string; addedKinds: TriggerKind[] }> {
   const mergeCutoff = new Date(windowStart.getTime() - config.anomalyMergeGapMinutes * MINUTE_MS);
 
   const [recentAnomaly] = await db
@@ -313,7 +322,8 @@ async function persistAnomaly(
       })
       .where(eq(anomalies.id, openAnomaly.id));
 
-    return { action: "extended", anomalyId: openAnomaly.id };
+    const addedKinds = triggers.map((t) => t.kind).filter((kind) => !knownKinds.has(kind));
+    return { action: "extended", anomalyId: openAnomaly.id, addedKinds };
   }
 
   const [created] = await db
@@ -329,7 +339,7 @@ async function persistAnomaly(
     .returning({ id: anomalies.id });
 
   if (!created) throw new Error("failed to insert anomaly");
-  return { action: "created", anomalyId: created.id };
+  return { action: "created", anomalyId: created.id, addedKinds: triggers.map((t) => t.kind) };
 }
 
 /**
@@ -363,9 +373,38 @@ export async function runDetection(
     .from(metricsRollup)
     .where(gte(metricsRollup.bucketStart, baselineStart));
 
+  /**
+   * Silence first, and silent services are skipped below.
+   *
+   * The window above ends at the newest rollup ANYWHERE. When every service
+   * has stopped logging, that rollup is the dead service's own last minute, so
+   * the detectors re-examined the same frozen five minutes on every run and
+   * kept "extending" an incident from data that would never change — an
+   * outage reported as ongoing errors long after there were no requests at all.
+   * Once a service is silent, silence is the finding; its stale window is not.
+   */
+  const silent = options.skipSilence
+    ? []
+    : await runSilenceDetection(options.now ?? new Date(), config);
+  const silentServices = new Set(silent.map((result) => result.service));
+
   const results: ServiceDetectionResult[] = [];
 
   for (const { service } of serviceRows) {
+    if (silentServices.has(service)) {
+      results.push({
+        service,
+        windowStart,
+        windowEnd,
+        triggers: [],
+        action: "none",
+        anomalyId: null,
+        addedKinds: [],
+        skippedReason: "silent — judged by service_silent, not by a stale window",
+      });
+      continue;
+    }
+
     const baseline = await loadBaselineStats(service, baselineStart, baselineEnd);
 
     if (baseline.minutes < config.minBaselineMinutes) {
@@ -376,6 +415,7 @@ export async function runDetection(
         triggers: [],
         action: "none",
         anomalyId: null,
+        addedKinds: [],
         skippedReason: `only ${baseline.minutes} min of baseline (need ${config.minBaselineMinutes})`,
       });
       continue;
@@ -392,11 +432,12 @@ export async function runDetection(
         triggers: [],
         action: "none",
         anomalyId: null,
+        addedKinds: [],
       });
       continue;
     }
 
-    const { action, anomalyId } = await persistAnomaly(
+    const { action, anomalyId, addedKinds } = await persistAnomaly(
       service,
       windowStart,
       windowEnd,
@@ -404,12 +445,8 @@ export async function runDetection(
       config,
     );
 
-    results.push({ service, windowStart, windowEnd, triggers, action, anomalyId });
+    results.push({ service, windowStart, windowEnd, triggers, action, anomalyId, addedKinds });
   }
-
-  const silent = options.skipSilence
-    ? []
-    : await runSilenceDetection(options.now ?? new Date(), config);
 
   return { windowStart, windowEnd, services: results, silent };
 }
@@ -479,7 +516,7 @@ async function runSilenceDetection(
     // The window is the silence itself: from the last line to now.
     const windowStart = new Date(floorToMinute(lastSeenAt.getTime()));
     const windowEnd = new Date(floorToMinute(now.getTime()));
-    const { action, anomalyId } = await persistAnomaly(
+    const { action, anomalyId, addedKinds } = await persistAnomaly(
       service,
       windowStart,
       windowEnd,
@@ -487,7 +524,7 @@ async function runSilenceDetection(
       config,
     );
 
-    results.push({ service, windowStart, windowEnd, triggers: [trigger], action, anomalyId });
+    results.push({ service, windowStart, windowEnd, triggers: [trigger], action, anomalyId, addedKinds });
   }
 
   return results;
