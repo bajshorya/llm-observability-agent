@@ -10,6 +10,7 @@
     "classify": "tsx src/classification/cli.ts",
     "correlate": "tsx src/correlation/cli.ts",
     "diagnose": "tsx src/diagnosis/cli.ts",
+    "watch": "tsx src/watch/cli.ts",
     "alert": "tsx src/alerting/cli.ts",
     "eval": "tsx src/eval/cli.ts",
     "test": "vitest run",
