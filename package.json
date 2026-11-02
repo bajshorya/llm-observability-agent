@@ -17,6 +17,8 @@
     "watch": "pnpm --filter @obs/backend watch",
     "alert": "pnpm --filter @obs/backend alert",
     "dashboard": "pnpm --filter @obs/dashboard dev",
+    "dashboard:build": "pnpm --filter @obs/dashboard build",
+    "dashboard:start": "pnpm --filter @obs/dashboard start",
     "eval": "pnpm --filter @obs/backend eval",
     "test": "pnpm -r test",
     "db:push": "pnpm --filter @obs/backend db:push",
