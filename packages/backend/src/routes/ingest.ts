@@ -30,15 +30,24 @@
  * over millions of rows at query time. Doing it at read time would move real
  * cost into the detection path to save nothing here.
  *
+ * TIMESTAMPS FROM THE FUTURE ARE REJECTED
+ * More than MAX_FUTURE_SKEW_MS ahead of this server's clock is a per-entry
+ * rejection. This is not tidiness. Detection anchors its window to the newest
+ * rollup ANYWHERE, so one line stamped next year — a client sending epoch
+ * microseconds is enough — would move every service's window into an empty
+ * future and blind all detection until the wall clock caught up. The same line
+ * would also make its service impossible to see go silent, because its "last
+ * seen" would be ahead of now. Five minutes absorbs ordinary clock skew.
+ *
  * AUTHENTICATION
  * When `INGEST_API_KEY` is set, a request without `Authorization: Bearer <key>`
- * is a 401 before its body is looked at. Unset, ingest is open. routes/auth.ts.
+ * is a 401 from an `onRequest` hook, before the body is even read. Unset, ingest is open. routes/auth.ts.
  *
  * Inserts are chunked at 250 rows to stay well under SQLite's bound-parameter
  * limit per statement.
  */
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   hasErrorSignature,
@@ -51,6 +60,9 @@ import { db } from "../db/client";
 import { logs, type NewLogRow } from "../db/schema";
 import { env } from "../env";
 import { isIngestAuthorized } from "./auth";
+
+/** How far ahead of this server's clock a timestamp may be. See the header. */
+export const MAX_FUTURE_SKEW_MS = 5 * 60_000;
 
 /** SQLite caps bound parameters per statement; chunk to stay well under it. */
 const INSERT_CHUNK_SIZE = 250;
@@ -70,14 +82,21 @@ function describeIssue(error: z.ZodError): string {
 }
 
 export function registerIngestRoute(app: FastifyInstance): void {
-  app.post("/ingest", async (request, reply) => {
+  /**
+   * `onRequest`, not the handler: it runs before Fastify reads and parses the
+   * body, so an unauthenticated client cannot make the server parse up to
+   * 16 MB of JSON just to be told no.
+   */
+  const requireKey = async (request: FastifyRequest, reply: FastifyReply) => {
     if (!isIngestAuthorized(request.headers.authorization, env.INGEST_API_KEY)) {
       return reply.code(401).send({
         error: "unauthorized",
         message: "POST /ingest requires Authorization: Bearer <INGEST_API_KEY>.",
       });
     }
+  };
 
+  app.post("/ingest", { onRequest: requireKey }, async (request, reply) => {
     const envelope = envelopeSchema.safeParse(request.body);
 
     if (!envelope.success) {
@@ -87,6 +106,7 @@ export function registerIngestRoute(app: FastifyInstance): void {
       });
     }
 
+    const latestAllowed = Date.now() + MAX_FUTURE_SKEW_MS;
     const rows: NewLogRow[] = [];
     const errors: IngestResult["errors"] = [];
 
@@ -106,6 +126,16 @@ export function registerIngestRoute(app: FastifyInstance): void {
       }
 
       const entry = parsed.data;
+      if (entry.timestamp.getTime() > latestAllowed) {
+        if (errors.length < MAX_REPORTED_ERRORS) {
+          errors.push({
+            index,
+            reason: "timestamp: more than 5 minutes in the future — check the sender's clock and units",
+          });
+        }
+        return;
+      }
+
       rows.push({
         timestamp: entry.timestamp,
         service: entry.service,

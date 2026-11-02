@@ -88,19 +88,53 @@ export const logMetadataSchema = z
 
 export type LogMetadata = z.infer<typeof logMetadataSchema>;
 
+/**
+ * Anything before this is a unit mistake, not a log line: epoch SECONDS read as
+ * milliseconds land in January 1970. Rejected with a message that says so,
+ * rather than stored as a line from fifty years ago.
+ *
+ * The matching upper bound (no more than a few minutes in the future) needs a
+ * clock, so it lives in the ingest route, not in this pure schema.
+ */
+export const MIN_LOG_TIMESTAMP = new Date("2000-01-01T00:00:00.000Z");
+
+/**
+ * Service names appear in URLs, prompts, alerts and file-like contexts, so
+ * they are identifiers, not free text: letters, digits, dot, dash and
+ * underscore, starting with a letter or digit. Every Kubernetes, ECS and
+ * systemd service name already fits.
+ */
+export const SERVICE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Serialised metadata per entry. Generous for context, bounded for storage. */
+export const MAX_METADATA_BYTES = 16_384;
+
 export const logEntrySchema = z.object({
   /**
    * Accepts an ISO-8601 string or epoch milliseconds. The custom error text
    * matters: this is the message an engineer integrating a new service sees,
    * and Zod's default ("expected date, received Date") explains nothing.
    */
-  timestamp: z.coerce.date({
-    error: "must be an ISO-8601 string or epoch milliseconds",
-  }),
-  service: z.string().min(1).max(64),
+  timestamp: z.coerce
+    .date({
+      error: "must be an ISO-8601 string or epoch milliseconds",
+    })
+    .min(MIN_LOG_TIMESTAMP, {
+      error: "is before 2000 — epoch seconds sent where milliseconds were expected?",
+    }),
+  service: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(SERVICE_NAME_PATTERN, {
+      error: "must be letters, digits, '.', '-' or '_', starting with a letter or digit",
+    }),
   level: logLevelSchema,
   message: z.string().min(1).max(4096),
-  metadata: logMetadataSchema.default({}),
+  metadata: logMetadataSchema.default({}).refine(
+    (metadata) => JSON.stringify(metadata).length <= MAX_METADATA_BYTES,
+    { error: `must serialise to at most ${MAX_METADATA_BYTES} bytes` },
+  ),
 });
 
 export type LogEntry = z.infer<typeof logEntrySchema>;

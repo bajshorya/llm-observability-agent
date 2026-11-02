@@ -8,9 +8,13 @@
  * than an endpoint.
  *
  * THE TWO ROUTES
- *   GET  /health   status, the resolved database path, and the current log
- *                  count. The log count is the useful part — it answers "is the
- *                  generator actually reaching this server" in one call.
+ *   GET  /health   status, and the timestamp of the most recently INGESTED
+ *                  line — which answers "is anything actually reaching this
+ *                  server" in one call. It used to return count(*) over logs,
+ *                  a full table scan on every load-balancer probe, and the
+ *                  database's absolute path, which a probe has no need to
+ *                  know. The newest row by rowid is an index lookup.
+ *                  A database it cannot read is a 503, so a probe sees it.
  *   POST /ingest   registered from `routes/ingest.ts`.
  *
  * WHY DETECTION IS NOT AN ENDPOINT
@@ -39,7 +43,7 @@
  */
 
 import Fastify from "fastify";
-import { count } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { databasePath, db } from "./db/client";
 import { logs } from "./db/schema";
 import { env } from "./env";
@@ -67,13 +71,17 @@ const app = Fastify({
   bodyLimit: 16 * 1024 * 1024,
 });
 
-app.get("/health", async () => {
-  const [row] = await db.select({ value: count() }).from(logs);
-  return {
-    status: "ok",
-    database: databasePath,
-    logCount: row?.value ?? 0,
-  };
+app.get("/health", async (_request, reply) => {
+  try {
+    const [row] = await db
+      .select({ timestamp: logs.timestamp })
+      .from(logs)
+      .where(sql`rowid = (SELECT max(rowid) FROM ${logs})`);
+    return { status: "ok", lastIngestedLogAt: row?.timestamp.toISOString() ?? null };
+  } catch (error) {
+    app.log.error(error);
+    return reply.code(503).send({ status: "unavailable" });
+  }
 });
 
 registerIngestRoute(app);
