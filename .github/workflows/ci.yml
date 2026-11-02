@@ -1,0 +1,57 @@
+# Typecheck, test and build on every push and pull request.
+#
+# No secrets, no network beyond package installs: the suite runs against the
+# stub provider and in-memory databases by design, so CI proves the code is
+# correct without spending a single model request. Model quality is measured
+# separately, by `pnpm eval`, deliberately and by hand.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build the dashboard
+        run: pnpm dashboard:build
+
+      # The demo's exit status alone would pass a run in which a stage quietly
+      # did nothing, so the funnel it prints is checked: one anomaly, carried
+      # through all three stages, and nothing applied.
+      - name: Smoke test — the whole pipeline, offline, against the stub
+        run: |
+          sudo apt-get install -y sqlite3 lsof >/dev/null
+          bash scripts/demo.sh | tee demo.log
+          grep -q "1 anomalies -> 1 classified" demo.log
+          grep -q "1 real incident(s) -> 1 correlated" demo.log
+          grep -q "1 attributed incident(s) -> 1 diagnosed" demo.log
+          grep -q "0 applied" demo.log
