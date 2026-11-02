@@ -50,7 +50,22 @@ import { commitWindowSchema, type CandidateCommit, type CommitWindow } from "@ob
 import { REPO_ROOT, env } from "../env";
 import { GIT_LOG_ARGS, parseGitLog } from "./commits";
 
-const run = promisify(execFile);
+const execFileAsync = promisify(execFile);
+
+/**
+ * Every git call goes through here. `GIT_OPTIONAL_LOCKS=0` stops a read-only
+ * command from taking the index lock in a checkout someone may be using, and
+ * `GIT_TERMINAL_PROMPT=0` makes a git that wants credentials fail instead of
+ * waiting forever for input no one will type.
+ */
+const run = (file: string, args: readonly string[], options: { maxBuffer: number }) =>
+  execFileAsync(file, args, {
+    ...options,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+  });
+
+/** A full or abbreviated commit id, and nothing else. */
+export const SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 
 /**
  * How far back to look for candidate commits. See the header for why these
@@ -115,12 +130,21 @@ export async function commitBySha(
   sha: string,
   repoPath?: string,
 ): Promise<CandidateCommit | null> {
+  /**
+   * Checked before git sees it, and passed after `--end-of-options`. The sha
+   * reaching here today is always a real candidate's (grounding replaces the
+   * model's answer with it), but this function takes a string, and a string
+   * that starts with `--` is an option to git — `--output=<path>` writes a
+   * file. Not relying on the caller is the point.
+   */
+  if (!SHA_PATTERN.test(sha)) return null;
+
   const repo = await resolveTargetRepo(repoPath);
 
   try {
     const { stdout } = await run(
       "git",
-      ["-C", repo, ...GIT_LOG_ARGS, "--max-count=1", sha],
+      ["-C", repo, ...GIT_LOG_ARGS, "--max-count=1", "--end-of-options", sha],
       { maxBuffer: MAX_STDOUT_BYTES },
     );
 

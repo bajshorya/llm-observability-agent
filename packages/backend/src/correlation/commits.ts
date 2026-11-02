@@ -111,6 +111,15 @@ export const GIT_LOG_ARGS = [
    * such text inside a patch is prefixed with `+`, `-` or a space.
    */
   "-p",
+  /**
+   * No conversion helpers. A `textconv` or external diff driver configured on
+   * the machine would otherwise run while this reads someone else's history,
+   * and would put its output — not the file's real content — into a prompt.
+   * With neither configured (the fixture, and most machines) the output is
+   * byte-identical, so captured packets do not move.
+   */
+  "--no-textconv",
+  "--no-ext-diff",
   `--format=${GIT_LOG_FORMAT}`,
 ] as const;
 
