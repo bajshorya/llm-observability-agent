@@ -82,7 +82,6 @@ bash "$REPO/scripts/build-fixture-repo.sh" >/dev/null 2>&1
 # --- one baseline, reused by every scenario ----------------------------------
 if [ ! -f "$WORK/base.db" ]; then
   echo "Seeding baseline ($BASELINE_MINUTES min)..."
-  sqlite3 "$REPO/data/dev.db" .schema | sqlite3 "$WORK/base.db"
   start_backend "$WORK/base.db"
   INGEST_URL="http://localhost:$PORT/ingest" \
     pnpm generate backfill --minutes $BASELINE_MINUTES --end-at "$END_AT" 2>&1 | tail -1

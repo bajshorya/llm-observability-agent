@@ -52,17 +52,14 @@ cleanup() { lsof -ti:$PORT | xargs kill -9 >/dev/null 2>&1; }
 trap cleanup EXIT
 
 # --- 0. preflight ------------------------------------------------------------
-if [ ! -f "$REPO/data/dev.db" ]; then
-  step "Creating the schema (data/dev.db does not exist yet)"
-  pnpm db:push >/dev/null 2>&1 || { echo "db:push failed"; exit 1; }
-fi
+# No schema step: the backend creates and migrates the scratch database the
+# first time it opens it (packages/backend/src/db/migrate.ts).
 
 step "Building the target repository the correlator reads"
 bash "$REPO/scripts/build-fixture-repo.sh" >/dev/null 2>&1
 note "12 commits at a pinned anchor, so the shas are the same on every machine"
 
 rm -rf "$WORK"; mkdir -p "$WORK"
-sqlite3 "$REPO/data/dev.db" .schema | sqlite3 "$DB"
 note "scratch database: $DB (data/dev.db is untouched)"
 
 # --- 1. traffic --------------------------------------------------------------

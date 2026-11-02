@@ -46,7 +46,6 @@ stop_backend() {
 # --- one baseline, reused by every scenario ----------------------------------
 if [ ! -f "$WORK/base.db" ]; then
   echo "Seeding baseline ($BASELINE_MINUTES min)..."
-  sqlite3 "$REPO/data/dev.db" .schema | sqlite3 "$WORK/base.db"
   start_backend "$WORK/base.db"
   INGEST_URL="http://localhost:$PORT/ingest" \
     pnpm generate backfill --minutes $BASELINE_MINUTES 2>&1 | tail -1

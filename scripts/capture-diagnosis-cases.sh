@@ -37,7 +37,6 @@ LIMITER_SHA="$(git -C "$REPO/fixtures/orders-api" log --format=%H --grep='token 
 seed() {
   local scenario=$1 db="$WORK/$1.db"
   rm -rf "$WORK/$1.db"*; mkdir -p "$WORK"
-  sqlite3 "$REPO/data/dev.db" .schema | sqlite3 "$db"
 
   DATABASE_URL="file:$db" PORT=$PORT pnpm --filter @obs/backend start >/dev/null 2>&1 &
   for _ in $(seq 1 30); do curl -s "localhost:$PORT/health" >/dev/null 2>&1 && break; sleep 1; done
