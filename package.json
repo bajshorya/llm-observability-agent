@@ -21,7 +21,8 @@
     "test": "pnpm -r test",
     "db:push": "pnpm --filter @obs/backend db:push",
     "db:studio": "pnpm --filter @obs/backend db:studio",
-    "typecheck": "pnpm -r exec tsc --noEmit"
+    "typecheck": "pnpm -r exec tsc --noEmit",
+    "retention": "pnpm --filter @obs/backend retention"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

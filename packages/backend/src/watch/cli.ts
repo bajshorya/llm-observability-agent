@@ -9,6 +9,7 @@
  *   3. correlate              only with --correlate or --llm
  *   4. diagnose               only with --diagnose or --llm
  *   5. alert                  unless --no-alerts. Never calls a model.
+ *   6. retention              first tick, then hourly (db/retention.ts)
  *
  * It contains no pipeline logic. Each stage is the same function its own
  * command calls; this file only sequences them and enforces the budget.
@@ -50,6 +51,8 @@ import { sendPendingAlerts } from "../alerting/notify";
 import { classifyAnomalies } from "../classification/classify";
 import { correlateAnomalies } from "../correlation/correlate";
 import { db } from "../db/client";
+import { pruneOldData } from "../db/retention";
+import { env } from "../env";
 import { llmCalls } from "../db/schema";
 import { runDetection, type ServiceDetectionResult } from "../detection/engine";
 import { runRollup } from "../detection/rollup";
@@ -199,6 +202,10 @@ async function runStage(
 
 let quietTicks = 0;
 
+/** Retention runs on the first tick and then hourly; it is cheap when there is nothing to delete. */
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+let lastPrunedAt = 0;
+
 async function tick(options: Options, provider: LlmProvider | null, tickNumber: number): Promise<void> {
   const now = new Date();
   const out: string[] = [];
@@ -236,6 +243,21 @@ async function tick(options: Options, provider: LlmProvider | null, tickNumber: 
       }
     } catch (error) {
       out.push(`  alert      error — ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  if (now.getTime() - lastPrunedAt >= PRUNE_INTERVAL_MS) {
+    lastPrunedAt = now.getTime();
+    try {
+      const pruned = await pruneOldData({
+        now,
+        policy: { logDays: env.LOG_RETENTION_DAYS, rollupDays: env.ROLLUP_RETENTION_DAYS },
+      });
+      if (pruned.logsDeleted + pruned.rollupsDeleted > 0) {
+        out.push(`  retention  deleted ${pruned.logsDeleted} log line(s), ${pruned.rollupsDeleted} rollup row(s)`);
+      }
+    } catch (error) {
+      out.push(`  retention  error — ${error instanceof Error ? error.message : error}`);
     }
   }
 

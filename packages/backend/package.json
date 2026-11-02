@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "retention": "tsx src/db/prune-cli.ts"
   },
   "dependencies": {
     "@obs/shared": "workspace:^",

@@ -14,7 +14,8 @@ import { configuredTargets, sendPendingAlerts } from "./notify";
 
 const USAGE = `
 Send due alerts: real incidents at or above ALERT_MIN_SEVERITY (${env.ALERT_MIN_SEVERITY}),
-and services that have stopped logging. Never calls a model.
+services that have stopped logging, and windows whose logs address the classifier
+(suspected prompt injection) when its verdict would not page. Never calls a model.
 
 Usage:
   pnpm alert [options]
@@ -58,7 +59,7 @@ async function main(): Promise<void> {
 
   for (const outcome of outcomes) {
     const short = outcome.anomalyId.slice(0, 8);
-    const line = `  ${short}  ${outcome.reason.padEnd(8)} ${outcome.channel.padEnd(8)} ${outcome.status}`;
+    const line = `  ${short}  ${outcome.reason.padEnd(9)} ${outcome.channel.padEnd(8)} ${outcome.status}`;
     console.log(outcome.error ? `${line} — ${outcome.error}` : line);
     if (outcome.status === "dry-run") console.log(outcome.message.text.replace(/^/gm, "      "));
   }

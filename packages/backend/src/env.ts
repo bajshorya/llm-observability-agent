@@ -21,6 +21,7 @@
  *   OLLAMA_BASE_URL              local provider, no key needed
  *   TARGET_REPO_PATH             the repository Phase 3 correlates against
  *   CORRELATION_DIFFS            include hunks in the correlation packet
+ *   LOG/ROLLUP_RETENTION_DAYS    how long raw logs and rollups are kept
  *
  * TWO DETAILS THAT MATTER MORE THAN THEY LOOK
  *
@@ -134,6 +135,15 @@ const envSchema = z.object({
   ALERT_MIN_SEVERITY: z.enum(["low", "medium", "high", "critical"]).default("high"),
   /** Where alert links point. */
   DASHBOARD_URL: z.string().default("http://localhost:3000"),
+
+  /**
+   * Retention, in days (db/retention.ts). Raw logs are the bulk of the
+   * database and the pipeline reads only the last few hours of them; rollups
+   * are small and feed the charts. 0 keeps forever. `pnpm watch` applies
+   * these hourly; `pnpm retention` once.
+   */
+  LOG_RETENTION_DAYS: z.coerce.number().min(0).default(14),
+  ROLLUP_RETENTION_DAYS: z.coerce.number().min(0).default(90),
 
   /**
    * Include unified diffs in the correlation packet. Off by default.
