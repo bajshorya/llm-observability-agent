@@ -39,6 +39,13 @@
  * an AI product logs them all day ("LLM request failed, retrying"), and paging
  * on that would teach people to ignore this alert.
  *
+ * LOOK-ALIKES ARE FOLDED FOR THE SCAN
+ * Each line is matched as written, and again after NFKC folding (fullwidth
+ * "ｉｇｎｏｒｅ" becomes "ignore"), with invisible characters removed (ingest
+ * strips them already; this covers anything that reached a packet another
+ * way), and reversed, for text laid out right-to-left. The excerpt is always
+ * the line as the model saw it.
+ *
  * THE LIMIT, STATED
  * A regex cannot recognise every phrasing, every language or an encoded
  * payload. A determined attacker who reads this file can write around it. That
@@ -46,6 +53,8 @@
  * obvious attack — the one in the golden set — pages a human every time,
  * independent of which model is on duty.
  */
+
+import { stripInvisible } from "@obs/shared";
 
 export interface InjectionFinding {
   /** Which rule matched. Stable identifiers, for tests and the dashboard. */
@@ -80,6 +89,21 @@ const ADDRESSEE =
 const DIRECTIVE =
   /\b((respond|reply|answer|output|return) (with|only|that)|classify (this|it|these|them|the)|(mark|treat|label|rate|report|consider|set) (this|it|these|them|the|severity)\b[^.\n]{0,60}\b(benign|harmless|expected|low|false|resolved|not an? (incident|issue|problem)|noise)|(do not|don't|never) (page|alert|escalate|notify|wake))/i;
 
+function matchOne(text: string): string | null {
+  for (const candidate of STRONG) {
+    if (candidate.pattern.test(text)) return candidate.rule;
+  }
+  return ADDRESSEE.test(text) && DIRECTIVE.test(text) ? "addressed-directive" : null;
+}
+
+/** The line as written, then folded, then reversed — first rule that matches any. */
+function matchRule(line: string): string | null {
+  // Unicode tag characters spell ASCII invisibly; decode them so hidden text is read, not dropped.
+  const decoded = line.replace(/[\u{E0020}-\u{E007E}]/gu, (c) => String.fromCharCode((c.codePointAt(0) ?? 0) - 0xe0000));
+  const folded = stripInvisible(decoded).normalize("NFKC");
+  return matchOne(line) ?? matchOne(folded) ?? matchOne([...folded].reverse().join(""));
+}
+
 function excerpt(line: string): string {
   const trimmed = line.trim();
   return trimmed.length <= MAX_EXCERPT ? trimmed : `${trimmed.slice(0, MAX_EXCERPT - 1)}…`;
@@ -96,14 +120,7 @@ export function scanForInjection(packet: string): InjectionFinding[] {
   for (const line of packet.split("\n")) {
     if (!line.trim()) continue;
 
-    let rule: string | null = null;
-    for (const candidate of STRONG) {
-      if (candidate.pattern.test(line)) {
-        rule = candidate.rule;
-        break;
-      }
-    }
-    if (rule === null && ADDRESSEE.test(line) && DIRECTIVE.test(line)) rule = "addressed-directive";
+    const rule = matchRule(line);
     if (rule === null) continue;
 
     // The same payload repeats across the sample and the signature table.

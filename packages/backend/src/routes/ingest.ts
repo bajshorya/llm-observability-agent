@@ -39,6 +39,11 @@
  * would also make its service impossible to see go silent, because its "last
  * seen" would be ahead of now. Five minutes absorbs ordinary clock skew.
  *
+ * INVISIBLE CHARACTERS ARE REMOVED
+ * Unicode tags, zero-width and bidi controls, and C0/C1 controls are stripped
+ * from the message and metadata strings before storage, so a model, a person
+ * and the injection guard all read the same text. @obs/shared/sanitize.ts.
+ *
  * RETRIES ARE NOT DOUBLE-COUNTED
  * With an `Idempotency-Key` header, a repeat of a batch already stored gets
  * the original response back and inserts nothing. Without it, a client that
@@ -60,7 +65,9 @@ import {
   logEntrySchema,
   MAX_BATCH_SIZE,
   normalizeErrorSignature,
+  stripInvisible,
   type IngestResult,
+  type LogMetadata,
 } from "@obs/shared";
 import { db } from "../db/client";
 import { logs, type NewLogRow } from "../db/schema";
@@ -80,6 +87,20 @@ const MAX_REPORTED_ERRORS = 20;
 const envelopeSchema = z.object({
   entries: z.array(z.unknown()).min(1).max(MAX_BATCH_SIZE),
 });
+
+/**
+ * Invisible and control characters out of every string a reader will see:
+ * the message, and each top-level string in metadata. @obs/shared/sanitize.ts
+ * has the reasoning — in short, text a model reads but a person cannot see is
+ * an injection channel.
+ */
+function sanitizeMetadata(metadata: LogMetadata): LogMetadata {
+  const clean: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    clean[key] = typeof value === "string" ? stripInvisible(value) : value;
+  }
+  return clean as LogMetadata;
+}
 
 function describeIssue(error: z.ZodError): string {
   const issue = error.issues[0];
@@ -160,15 +181,21 @@ export function registerIngestRoute(app: FastifyInstance): void {
         return;
       }
 
+      const message = stripInvisible(entry.message);
+      if (message.trim() === "") {
+        if (errors.length < MAX_REPORTED_ERRORS) {
+          errors.push({ index, reason: "message: nothing visible left once control characters are removed" });
+        }
+        return;
+      }
+
       rows.push({
         timestamp: entry.timestamp,
         service: entry.service,
         level: entry.level,
-        message: entry.message,
-        errorSignature: hasErrorSignature(entry.level)
-          ? normalizeErrorSignature(entry.message)
-          : null,
-        metadata: entry.metadata,
+        message,
+        errorSignature: hasErrorSignature(entry.level) ? normalizeErrorSignature(message) : null,
+        metadata: sanitizeMetadata(entry.metadata),
       });
     });
 
