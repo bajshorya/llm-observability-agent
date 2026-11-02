@@ -64,6 +64,16 @@ const optionalSecret = z
   .optional()
   .transform((value) => (value ? value : undefined));
 
+/**
+ * A number from the environment where an EMPTY value means "use the default".
+ * `z.coerce.number()` alone reads `""` as 0, so `PORT=` crashed start-up and
+ * `LOG_RETENTION_DAYS=` silently meant "keep forever" — the opposite of what
+ * `.env.example` promises an empty line does.
+ */
+const blankAsUnset = (value: unknown) =>
+  typeof value === "string" && value.trim() === "" ? undefined : value;
+const envNumber = <T extends z.ZodType>(schema: T) => z.preprocess(blankAsUnset, schema);
+
 export const llmProviderNames = [
   "gemini",
   "nvidia",
@@ -77,7 +87,7 @@ const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
-  PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+  PORT: envNumber(z.coerce.number().int().min(1).max(65535).default(4000)),
   /** `file:` prefix is optional and stripped by the db client. */
   DATABASE_URL: z.string().min(1).default("file:./data/dev.db"),
   /**
@@ -99,7 +109,7 @@ const envSchema = z.object({
    * can be measured — running the same stored packets at 0 and at the default
    * answers whether a score moves on its own, which nothing else can.
    */
-  LLM_TEMPERATURE: z.coerce.number().min(0).max(2).optional(),
+  LLM_TEMPERATURE: envNumber(z.coerce.number().min(0).max(2).optional()),
   GEMINI_API_KEY: optionalSecret,
   NVIDIA_API_KEY: optionalSecret,
   OPENROUTER_API_KEY: optionalSecret,
@@ -142,8 +152,8 @@ const envSchema = z.object({
    * are small and feed the charts. 0 keeps forever. `pnpm watch` applies
    * these hourly; `pnpm retention` once.
    */
-  LOG_RETENTION_DAYS: z.coerce.number().min(0).default(14),
-  ROLLUP_RETENTION_DAYS: z.coerce.number().min(0).default(90),
+  LOG_RETENTION_DAYS: envNumber(z.coerce.number().min(0).default(14)),
+  ROLLUP_RETENTION_DAYS: envNumber(z.coerce.number().min(0).default(90)),
 
   /**
    * Include unified diffs in the correlation packet. Off by default.
