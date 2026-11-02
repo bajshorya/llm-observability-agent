@@ -32,7 +32,8 @@
  * shared schema means client and server cannot disagree about what is valid.
  *
  * DELIVERY
- * At most one POST in flight. 5xx, 429 and network errors are retried with
+ * At most one POST in flight, each batch carrying an `Idempotency-Key` that is
+ * reused on its retries, so a retry after a lost response is not stored twice. 5xx, 429 and network errors are retried with
  * exponential backoff (`maxRetries`, default 2) and the batch is then dropped
  * and reported; holding it forever is how a client's memory grows during the
  * very outage it is meant to describe. A 400 is not retried — the server has
@@ -195,6 +196,12 @@ export function createObsClient(options: ObsClientOptions): ObsClient {
   }
 
   async function postBatch(batch: QueuedEntry[]): Promise<void> {
+    /**
+     * One key per batch, the same on every retry. A retry after a lost
+     * response is otherwise stored twice, and doubled error lines look like
+     * an error-rate spike. The server replays its first answer instead.
+     */
+    const idempotencyKey = globalThis.crypto.randomUUID();
     for (let attempt = 0; ; attempt += 1) {
       let status: number;
       let body = "";
@@ -203,6 +210,7 @@ export function createObsClient(options: ObsClientOptions): ObsClient {
           method: "POST",
           headers: {
             "content-type": "application/json",
+            "idempotency-key": idempotencyKey,
             ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),
             ...options.headers,
           },

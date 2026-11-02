@@ -39,6 +39,12 @@
  * would also make its service impossible to see go silent, because its "last
  * seen" would be ahead of now. Five minutes absorbs ordinary clock skew.
  *
+ * RETRIES ARE NOT DOUBLE-COUNTED
+ * With an `Idempotency-Key` header, a repeat of a batch already stored gets
+ * the original response back and inserts nothing. Without it, a client that
+ * retried after a lost response stored every line twice — and doubled error
+ * lines are what the error-rate detector fires on. routes/idempotency.ts.
+ *
  * AUTHENTICATION
  * When `INGEST_API_KEY` is set, a request without `Authorization: Bearer <key>`
  * is a 401 from an `onRequest` hook, before the body is even read. Unset, ingest is open. routes/auth.ts.
@@ -60,6 +66,7 @@ import { db } from "../db/client";
 import { logs, type NewLogRow } from "../db/schema";
 import { env } from "../env";
 import { isIngestAuthorized } from "./auth";
+import { IdempotencyCache, isValidIdempotencyKey } from "./idempotency";
 
 /** How far ahead of this server's clock a timestamp may be. See the header. */
 export const MAX_FUTURE_SKEW_MS = 5 * 60_000;
@@ -96,7 +103,24 @@ export function registerIngestRoute(app: FastifyInstance): void {
     }
   };
 
+  const seen = new IdempotencyCache();
+
   app.post("/ingest", { onRequest: requireKey }, async (request, reply) => {
+    const rawKey = request.headers["idempotency-key"];
+    const key = typeof rawKey === "string" ? rawKey.trim() : null;
+    if (key !== null && !isValidIdempotencyKey(key)) {
+      return reply.code(400).send({
+        error: "invalid_idempotency_key",
+        message: "Idempotency-Key must be 16-128 characters of letters, digits, '-' or '_'.",
+      });
+    }
+    if (key !== null) {
+      const previous = seen.get(key, Date.now());
+      if (previous) {
+        return reply.code(previous.status).header("idempotent-replay", "true").send(previous.body);
+      }
+    }
+
     const envelope = envelopeSchema.safeParse(request.body);
 
     if (!envelope.success) {
@@ -162,6 +186,8 @@ export function registerIngestRoute(app: FastifyInstance): void {
     };
 
     // 207 signals "some of this batch did not make it" without failing the whole call.
-    return reply.code(rejected > 0 ? 207 : 202).send(result);
+    const status = rejected > 0 ? 207 : 202;
+    if (key !== null) seen.set(key, { status, body: result }, Date.now());
+    return reply.code(status).send(result);
   });
 }

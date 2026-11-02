@@ -76,6 +76,20 @@ describe("createObsClient", () => {
     expect(open.calls[0]?.headers).not.toHaveProperty("authorization");
   });
 
+  it("reuses one idempotency key across a batch's retries, and a fresh one per batch", async () => {
+    const { fn, calls } = fakeFetch([503, 503, 202, 202]);
+    const { obs } = client(fn, { maxRetries: 2, batchSize: 1 });
+    obs.info("first");
+    await obs.flush();
+    obs.info("second");
+    await obs.close();
+    const keys = calls.map((c) => c.headers["idempotency-key"]);
+    expect(keys).toHaveLength(4);
+    expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(new Set(keys.slice(0, 3)).size).toBe(1);
+    expect(keys[3]).not.toBe(keys[0]);
+  });
+
   it("does not retry a refused key, and drops the batch", async () => {
     const { fn, calls } = fakeFetch([401]);
     const { obs, errors } = client(fn, { apiKey: "wrong" });
