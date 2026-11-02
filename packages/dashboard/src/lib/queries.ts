@@ -23,7 +23,7 @@
  */
 
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
-import { db } from "@obs/backend/src/db/client";
+import { db } from "./db";
 import {
   alerts,
   anomalies,

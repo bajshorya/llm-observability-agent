@@ -73,6 +73,9 @@ importers:
       '@obs/shared':
         specifier: workspace:^
         version: link:../shared
+      better-sqlite3:
+        specifier: ^13.0.1
+        version: 13.0.1
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.1)
@@ -86,6 +89,9 @@ importers:
         specifier: ^19.2.0
         version: 19.2.8(react@19.2.8)
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       '@types/node':
         specifier: ^26.1.2
         version: 26.1.2
