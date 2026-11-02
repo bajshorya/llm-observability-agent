@@ -105,7 +105,25 @@ export const defaultModels: Record<LlmProviderName, string> = {
    * deploy.
    */
   gemini: "gemini-3.5-flash",
-  nvidia: "meta/llama-3.3-70b-instruct",
+  /**
+   * `meta/llama-3.3-70b-instruct` was the default until NVIDIA retired it on
+   * 2026-08-26 (HTTP 410). Chosen from what the free tier actually serves,
+   * measured on the golden sets with reasoning off (see llm/index.ts):
+   *
+   *   nemotron-3.5-lightning   classify: benign 1/3, incidents 3/3, ~1.2s
+   *                            correlate: 2/2 attributed, 4/4 declined
+   *                            diagnose:  guilty 1/2, innocent 3/3
+   *   gemma-4-31b-it           right on every case it answered, but ~80s per
+   *                            call; timed out on 3/6, then on 6/6
+   *   nemotron-3-super-120b    404 for a free account
+   *
+   * Good at correlation, weak at the one thing Tier 2 exists for: it pages on
+   * two of three benign windows, deploy restart included. That is why there
+   * is no automatic fallback to it when Gemini's quota runs out — failover
+   * would trade a quiet gap for false pages. Switching is a deliberate
+   * `LLM_PROVIDER=nvidia`.
+   */
+  nvidia: "nvidia/nemotron-3.5-lightning-30b-a3b",
   openrouter: "meta-llama/llama-3.3-70b-instruct:free",
   ollama: "llama3.1:8b",
   stub: "deterministic-stub",

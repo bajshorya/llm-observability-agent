@@ -87,12 +87,14 @@ export interface OpenAiCompatibleOptions {
   apiKey?: string;
   /** Extra headers. OpenRouter uses these for attribution on free models. */
   headers?: Record<string, string>;
+  /** Vendor-specific request fields, merged into the body. NVIDIA uses it to turn reasoning off. */
+  extraBody?: Record<string, unknown>;
 }
 
 export function createOpenAiCompatibleProvider(
   options: OpenAiCompatibleOptions,
 ): LlmProvider {
-  const { name, baseUrl, model, apiKey, headers = {} } = options;
+  const { name, baseUrl, model, apiKey, headers = {}, extraBody = {} } = options;
 
   return {
     name,
@@ -120,6 +122,7 @@ export function createOpenAiCompatibleProvider(
            * why this is safe to send unconditionally.
            */
           response_format: { type: "json_object" },
+          ...extraBody,
         },
       });
 

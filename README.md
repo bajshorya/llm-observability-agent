@@ -234,12 +234,19 @@ and success per invocation — failures included, since those spend quota too.
 |---|---|---|
 | `stub` | **Default.** Deterministic, offline, no account | No |
 | `gemini` | Primary. Native JSON mode, thinking disabled | Free, no card |
-| `nvidia` | Backup | Free tier |
+| `nvidia` | Backup. `nemotron-3.5-lightning`, reasoning disabled | Free tier |
 | `openrouter` | Model comparison for evals | Free `:free` variants |
 | `ollama` | Offline dev loop | No — runs locally |
 
 All five sit behind one `complete()` method, and the last three share a single
-OpenAI-compatible implementation. Everything works with no key at all: the stub
+OpenAI-compatible implementation.
+
+The NVIDIA backup is measured, and it is a backup for a reason. On the golden
+sets it names the right commit 2/2 and declines 4/4, but as a classifier it
+dismisses only 1 of 3 benign windows, so it would page on a deploy restart.
+Nothing fails over to it automatically when Gemini's daily quota runs out —
+switching is a deliberate `LLM_PROVIDER=nvidia`. (The previous default,
+`meta/llama-3.3-70b-instruct`, was retired by NVIDIA in August 2026.) Everything works with no key at all: the stub
 runs the full pipeline and the tests need no network.
 
 ---

@@ -11,7 +11,7 @@
  *   stub        DEFAULT. Deterministic, offline, no account. The whole
  *               pipeline and the entire test suite run without a key.
  *   gemini      Primary. Native API, JSON mode, thinking disabled.
- *   nvidia      Backup, OpenAI-compatible.
+ *   nvidia      Backup, OpenAI-compatible, reasoning disabled.
  *   openrouter  Model comparison for the eval harness, OpenAI-compatible.
  *   ollama      Local, no key at all, OpenAI-compatible.
  *
@@ -70,6 +70,14 @@ export function createProvider(name: LlmProviderName = env.LLM_PROVIDER): LlmPro
         baseUrl: openAiCompatibleBaseUrls.nvidia,
         model,
         apiKey: requireKey(env.NVIDIA_API_KEY, "NVIDIA_API_KEY", name),
+        /**
+         * Reasoning off, as for Gemini. NIM's reasoning models otherwise spend
+         * the whole `maxOutputTokens` budget thinking and return an empty
+         * completion (measured: 5 of 6 golden cases, finish_reason "length").
+         * The answer is four short fields; it does not need a scratchpad.
+         * A chat template that has no such switch ignores the field.
+         */
+        extraBody: { chat_template_kwargs: { enable_thinking: false } },
       });
 
     case "openrouter":
