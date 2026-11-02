@@ -44,7 +44,16 @@
  * real model, including through runs that scored badly. Fitting it to a
  * six-case golden set would produce a prompt that scores well on that set and
  * means nothing.
+ *
+ * ONE DELIBERATE CHANGE SINCE: THE UNTRUSTED-EVIDENCE RULE
+ * `UNTRUSTED_EVIDENCE_RULES` (llm/untrusted.ts) is appended before the reply
+ * format. It is a security control written from a measured attack, not an edit
+ * made for a score, and its text is shared verbatim by all three agents. The
+ * reasoning, and the before-and-after numbers, are in that file's header.
  */
+
+import { UNTRUSTED_EVIDENCE_RULES } from "../llm/untrusted";
+
 export const CLASSIFIER_SYSTEM_PROMPT = `
 You are the classification stage of an automated observability pipeline.
 
@@ -87,6 +96,8 @@ Fields:
 - affectedArea: the endpoint, dependency or subsystem implicated — for example
   "POST /orders checkout path" or "postgres connection pool". Use "unknown"
   when the evidence does not identify one. Do not guess.
+
+${UNTRUSTED_EVIDENCE_RULES}
 
 Reply with a single JSON object and nothing else. No markdown fences, no
 commentary before or after it:
