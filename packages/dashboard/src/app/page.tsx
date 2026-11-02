@@ -39,6 +39,7 @@ const verdictLabels: Record<(typeof verdicts)[number], string> = {
   dismissed: "dismissed",
   unclassified: "not yet classified",
   silent: "service went silent",
+  injection: "prompt injection suspected",
 };
 
 const sinceLabels: Record<keyof typeof sinceOptions, string> = {
@@ -200,6 +201,11 @@ pnpm watch --once --classify                  # detect, classify, alert`}</pre>
                   <span className={`tag sev ${band}`}>
                     {dismissed ? "dismissed" : (row.severity ?? "unclassified")}
                   </span>
+                  {row.injectionSuspected && (
+                    <span className="tag sev critical" title="Log text in this window is addressed to the classifier">
+                      injection?
+                    </span>
+                  )}
                   <span className="tag">{formatWindow(row.windowStart, row.windowEnd)}</span>
                   <span className="when" title="When Tier 1 last fired on it. The window shows when it began.">
                     last fired {formatAge(row.detectedAt)}

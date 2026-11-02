@@ -48,6 +48,9 @@ export interface AnomalyRow {
   summary: string | null;
   isRealIncident: boolean | null;
   affectedArea: string | null;
+  /** Set by the injection guard before Tier 2 calls a model; null until scanned. */
+  injectionSuspected: boolean | null;
+  injectionEvidence: string | null;
   status: AnomalyStatus;
 }
 
@@ -92,6 +95,8 @@ const ANOMALY_COLUMNS = {
   summary: anomalies.summary,
   isRealIncident: anomalies.isRealIncident,
   affectedArea: anomalies.affectedArea,
+  injectionSuspected: anomalies.injectionSuspected,
+  injectionEvidence: anomalies.injectionEvidence,
   status: anomalies.status,
 };
 
@@ -118,6 +123,9 @@ function filterConditions(filters: AnomalyFilters, now: Date): SQL[] {
       break;
     case "silent":
       conditions.push(hasSilence);
+      break;
+    case "injection":
+      conditions.push(sql`${anomalies.injectionSuspected} = 1`);
       break;
     case null:
       break;

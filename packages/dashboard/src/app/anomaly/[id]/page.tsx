@@ -128,6 +128,16 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
         <h2>What the model judged</h2>
         <p className="tier">Tier 2 · one call per incident</p>
 
+        {anomaly.injectionSuspected && (
+          <div className="warning">
+            <strong>Possible prompt injection.</strong> Text in this window is addressed to the
+            classifier rather than describing the system. The verdict below is shown, but it is not
+            trusted to keep this window quiet: a deterministic check flagged it before the model was
+            called, and that is what decides whether it pages.
+            <pre className="mono">{anomaly.injectionEvidence ?? "(flagged text not recorded)"}</pre>
+          </div>
+        )}
+
         {anomaly.severity === null && silentOnly ? (
           <p style={{ color: "var(--muted)" }}>
             Not classified, deliberately. The only signal is silence, and silence has no words in
@@ -266,11 +276,11 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
       {/* ---- alerts ---------------------------------------------------------- */}
       <section className="stage">
         <h2>Who was told</h2>
-        <p className="tier">Alerts · real incidents and silence only</p>
+        <p className="tier">Alerts · real incidents, silence and suspected injection only</p>
 
         {alertRows.length === 0 ? (
           <p style={{ color: "var(--muted)" }}>
-            {dismissed
+            {dismissed && !anomaly.injectionSuspected
               ? "No alert — a window judged benign never pages anyone. That is the point of Tier 2."
               : "No alert sent. Alerts go to real incidents at or above ALERT_MIN_SEVERITY, and to silence — run `pnpm alert`, or leave `pnpm watch` running."}
           </p>

@@ -115,6 +115,23 @@ header.site p { margin: 0; color: var(--muted); font-size: 14px; }
 .tag.dismissed { color: var(--dismissed); }
 
 /* --- detail ----------------------------------------------------------------- */
+.warning {
+  border: 1px solid var(--critical);
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 4px 0 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.warning pre {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .stage {
   background: var(--panel);
   border: 1px solid var(--border);

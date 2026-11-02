@@ -12,7 +12,7 @@
 
 import { anomalyStatuses, severities, type AnomalyStatus, type Severity } from "@obs/shared";
 
-export const verdicts = ["real", "dismissed", "unclassified", "silent"] as const;
+export const verdicts = ["real", "dismissed", "unclassified", "silent", "injection"] as const;
 export type Verdict = (typeof verdicts)[number];
 
 export const sinceOptions = { "1h": 60, "24h": 1440, "7d": 10_080, all: null } as const;
