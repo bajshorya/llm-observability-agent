@@ -165,6 +165,21 @@ export const migrations: readonly Migration[] = [
       }
     },
   },
+  {
+    version: 3,
+    name: "rollup_watermark",
+    up(sqlite) {
+      sqlite.exec(
+        "CREATE TABLE IF NOT EXISTS rollup_state (id integer PRIMARY KEY NOT NULL, last_log_rowid integer NOT NULL)",
+      );
+      // An existing database is taken as rolled up to its current newest log:
+      // re-aggregating all history on upgrade could read millions of rows at
+      // once. A fresh database gets 0 here and the first run covers everything.
+      sqlite.exec(
+        "INSERT OR IGNORE INTO rollup_state (id, last_log_rowid) SELECT 1, coalesce(max(rowid), 0) FROM logs",
+      );
+    },
+  },
 ];
 
 export const LATEST_VERSION = migrations.at(-1)?.version ?? 0;

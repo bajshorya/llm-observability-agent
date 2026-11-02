@@ -259,6 +259,16 @@ export const alerts = sqliteTable(
   (t) => [index("alerts_anomaly_idx").on(t.anomalyId)],
 );
 
+/**
+ * One row: the highest `logs` rowid the rollup has accounted for. Ingest
+ * order, not event time, is what tells the rollup a minute needs recomputing
+ * — see detection/rollup-plan.ts for the failure that made it necessary.
+ */
+export const rollupState = sqliteTable("rollup_state", {
+  id: integer("id").primaryKey(),
+  lastLogRowid: integer("last_log_rowid").notNull(),
+});
+
 export type LogRow = typeof logs.$inferSelect;
 export type NewLogRow = typeof logs.$inferInsert;
 export type AnomalyRow = typeof anomalies.$inferSelect;

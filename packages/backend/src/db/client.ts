@@ -58,6 +58,7 @@ const missing = missingColumns(sqlite, [
   schema.hypotheses,
   schema.llmCalls,
   schema.alerts,
+  schema.rollupState,
 ]);
 if (missing.length > 0) {
   throw new Error(

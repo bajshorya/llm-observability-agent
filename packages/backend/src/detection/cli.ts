@@ -145,7 +145,8 @@ async function runOnce({ rollupOnly, detectOnly, classify }: RunOptions): Promis
     } else {
       console.log(
         `Rollup: ${rollup.logsRead} logs -> ${rollup.bucketsWritten} buckets ` +
-          `(${rollup.from ? clock(rollup.from) : "?"} to ${rollup.to ? clock(rollup.to) : "?"})`,
+          `(${rollup.from ? clock(rollup.from) : "?"} to ${rollup.to ? clock(rollup.to) : "?"})` +
+          (rollup.lateMinutes > 0 ? `, plus ${rollup.lateMinutes} earlier minute(s) that late logs landed in` : ""),
       );
     }
     if (rollupOnly) return;
