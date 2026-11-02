@@ -28,6 +28,11 @@
  *   undefined is not the same as an absent key, and Fastify's types correctly
  *   reject it — so the ternary is load-bearing, not stylistic.
  *
+ * AUTH
+ * `POST /ingest` requires a bearer key when `INGEST_API_KEY` is set, and the
+ * server warns at startup when it is not. `/health` stays open: it is what a
+ * load balancer probes, and it writes nothing.
+ *
  * SHUTDOWN
  * SIGINT and SIGTERM close the app before exiting, so an in-flight batch is not
  * truncated mid-insert.
@@ -77,6 +82,9 @@ async function start(): Promise<void> {
   try {
     await app.listen({ port: env.PORT, host: "0.0.0.0" });
     app.log.info(`ingesting into ${databasePath}`);
+    if (env.INGEST_API_KEY === undefined) {
+      app.log.warn("INGEST_API_KEY is not set: anything that can reach this port can write logs.");
+    }
   } catch (error) {
     app.log.error(error);
     process.exit(1);

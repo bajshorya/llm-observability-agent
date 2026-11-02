@@ -14,6 +14,7 @@
  *
  * WHAT IT CONFIGURES
  *   PORT, DATABASE_URL           the ingestion API and its store
+ *   INGEST_API_KEY               optional bearer key required by POST /ingest
  *   LLM_PROVIDER, LLM_MODEL      which model the agents call, and an override
  *   LLM_TEMPERATURE              sampling override, for repeatability runs
  *   GEMINI/NVIDIA/OPENROUTER key credentials, all optional
@@ -78,6 +79,12 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   /** `file:` prefix is optional and stripped by the db client. */
   DATABASE_URL: z.string().min(1).default("file:./data/dev.db"),
+  /**
+   * When set, `POST /ingest` requires `Authorization: Bearer <key>`. Unset,
+   * ingest is open — fine on a laptop, not on a reachable host. The generator
+   * and `@obs/client` send it. See routes/auth.ts.
+   */
+  INGEST_API_KEY: optionalSecret,
 
   /**
    * Which provider the agents call. Defaults to `stub` so the whole pipeline
@@ -109,25 +116,6 @@ const envSchema = z.object({
   TARGET_REPO_PATH: z.string().default("./fixtures/orders-api"),
 
   /**
-   * Include unified diffs in the correlation packet. Off by default.
-   *
-   * Measured on three models, and the default is off because the DEFAULT MODEL
-   * is one of the two it hurts:
-   *
-   *   gemini-3.5-flash   6/6 without hunks, regresses to 1/2 attribution with
-   *   gemini-2.5-flash   2/4 declining without, 4/4 with
-   *   llama3.2 (3B)      2/2 attribution without, 0/2 with
-   *
-   * `gemini-3.5-flash`'s regression reproduced across two separate captures
-   * with the same reasoning both times: shown the limiter's code, it concludes
-   * the limiter is working as designed and declines. That reading is not
-   * unreasonable — the code IS correct, and the defect is in the constants it
-   * shipped with — which is precisely why more evidence does not help here.
-   *
-   * Turn it on only for a model you have measured yourself.
-   * `DOCUMENTATION-EVALS.md` §14.
-   */
-  /**
    * Alerting. Both optional; with neither set, `pnpm alert` and `pnpm watch`
    * print alerts to stdout instead of sending them, so the loop is observable
    * before any webhook exists.
@@ -147,6 +135,25 @@ const envSchema = z.object({
   /** Where alert links point. */
   DASHBOARD_URL: z.string().default("http://localhost:3000"),
 
+  /**
+   * Include unified diffs in the correlation packet. Off by default.
+   *
+   * Measured on three models, and the default is off because the DEFAULT MODEL
+   * is one of the two it hurts:
+   *
+   *   gemini-3.5-flash   6/6 without hunks, regresses to 1/2 attribution with
+   *   gemini-2.5-flash   2/4 declining without, 4/4 with
+   *   llama3.2 (3B)      2/2 attribution without, 0/2 with
+   *
+   * `gemini-3.5-flash`'s regression reproduced across two separate captures
+   * with the same reasoning both times: shown the limiter's code, it concludes
+   * the limiter is working as designed and declines. That reading is not
+   * unreasonable — the code IS correct, and the defect is in the constants it
+   * shipped with — which is precisely why more evidence does not help here.
+   *
+   * Turn it on only for a model you have measured yourself.
+   * `DOCUMENTATION-EVALS.md` §14.
+   */
   CORRELATION_DIFFS: z
     .enum(["0", "1", "true", "false"])
     .default("0")

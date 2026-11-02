@@ -30,6 +30,10 @@
  * over millions of rows at query time. Doing it at read time would move real
  * cost into the detection path to save nothing here.
  *
+ * AUTHENTICATION
+ * When `INGEST_API_KEY` is set, a request without `Authorization: Bearer <key>`
+ * is a 401 before its body is looked at. Unset, ingest is open. routes/auth.ts.
+ *
  * Inserts are chunked at 250 rows to stay well under SQLite's bound-parameter
  * limit per statement.
  */
@@ -45,6 +49,8 @@ import {
 } from "@obs/shared";
 import { db } from "../db/client";
 import { logs, type NewLogRow } from "../db/schema";
+import { env } from "../env";
+import { isIngestAuthorized } from "./auth";
 
 /** SQLite caps bound parameters per statement; chunk to stay well under it. */
 const INSERT_CHUNK_SIZE = 250;
@@ -65,6 +71,13 @@ function describeIssue(error: z.ZodError): string {
 
 export function registerIngestRoute(app: FastifyInstance): void {
   app.post("/ingest", async (request, reply) => {
+    if (!isIngestAuthorized(request.headers.authorization, env.INGEST_API_KEY)) {
+      return reply.code(401).send({
+        error: "unauthorized",
+        message: "POST /ingest requires Authorization: Bearer <INGEST_API_KEY>.",
+      });
+    }
+
     const envelope = envelopeSchema.safeParse(request.body);
 
     if (!envelope.success) {
