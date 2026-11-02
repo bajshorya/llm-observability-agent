@@ -6,7 +6,11 @@
  * a batch fills. It is the piece that turns "an ingestion endpoint" into
  * something a real service can point at in three lines:
  *
- *     const obs = createObsClient({ url: "http://localhost:4000/ingest", service: "orders-api" });
+ *     const obs = createObsClient({
+ *       url: "http://localhost:4000/ingest",
+ *       service: "orders-api",
+ *       apiKey: process.env.INGEST_API_KEY,   // when the backend requires one
+ *     });
  *     obs.error("Payment declined", { endpoint: "/checkout", statusCode: 502 });
  *     process.on("SIGTERM", () => obs.close());
  *
@@ -60,7 +64,9 @@ export interface ObsClientOptions {
   maxRetries?: number;
   /** Base backoff between retries, doubled each time. Default 500 ms. */
   retryBaseMs?: number;
-  /** Extra request headers, e.g. an auth header for a proxy in front of ingest. */
+  /** The backend's `INGEST_API_KEY`, sent as `Authorization: Bearer`. Empty means none. */
+  apiKey?: string | undefined;
+  /** Extra request headers, e.g. for a proxy in front of ingest. */
   headers?: Record<string, string>;
   /** Called on dropped entries and failed batches. Must not throw. */
   onError?: (error: Error) => void;
@@ -195,7 +201,11 @@ export function createObsClient(options: ObsClientOptions): ObsClient {
       try {
         const response = await doFetch(options.url, {
           method: "POST",
-          headers: { "content-type": "application/json", ...options.headers },
+          headers: {
+            "content-type": "application/json",
+            ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),
+            ...options.headers,
+          },
           body: JSON.stringify({ entries: batch }),
         });
         status = response.status;

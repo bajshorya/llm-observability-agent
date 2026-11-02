@@ -438,7 +438,11 @@ incident "firing" on every run.
 ```ts
 import { createObsClient, obsMiddleware } from "@obs/client";
 
-const obs = createObsClient({ url: "http://localhost:4000/ingest", service: "orders-api" });
+const obs = createObsClient({
+  url: "http://localhost:4000/ingest",
+  service: "orders-api",
+  apiKey: process.env.INGEST_API_KEY,            // when the backend requires one
+});
 app.use(obsMiddleware(obs));                     // one line per request: method, route, status, latency
 obs.error("Payment declined", { endpoint: "/checkout", statusCode: 502 });
 process.on("SIGTERM", () => obs.close());        // flush on shutdown
@@ -450,6 +454,14 @@ entries when full, 5xx/429/network errors are retried with backoff and then
 dropped, and the flush timer never holds a process open. Raw paths are
 templated (`/orders/12778` → `/orders/:id`) so per-endpoint rollups do not
 explode. There is no disk spool: what is queued when a process dies is lost.
+
+**Ingest is open unless you close it.** Set `INGEST_API_KEY` in `.env` and
+`POST /ingest` answers 401 to any request without `Authorization: Bearer
+<key>`; the generator reads the same file and sends it, and the client takes it
+as `apiKey`. With no key the server warns at startup, because it listens on
+every interface — and since logs are what the models read, an open ingest is
+also an open way into their prompts. One key per deployment: it does not stop
+one authorised service writing under another's name.
 
 ---
 

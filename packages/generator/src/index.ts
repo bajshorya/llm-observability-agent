@@ -27,6 +27,12 @@
  * makes an injection land on exactly the minutes it claims to, and makes runs
  * reproducible against bucket boundaries rather than against the wall clock.
  *
+ * CONFIGURATION
+ * Reads the repo's `.env` (shell variables win), so `INGEST_URL` and
+ * `INGEST_API_KEY` come from the same file the backend reads. When a key is
+ * set it is sent as `Authorization: Bearer <key>`; a 401 is reported as a
+ * key mismatch rather than as a generic failure.
+ *
  * ERROR HANDLING WORTH KNOWING
  * A connection failure is reported as "is the backend running?" rather than as
  * a raw fetch error, because that is the actual cause every time. HTTP 207 is
@@ -34,6 +40,8 @@
  * rejected entries are reported per index.
  */
 
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import type { IngestResult } from "@obs/shared";
 import { createRng } from "./random";
@@ -47,7 +55,17 @@ import {
   type TrafficProfile,
 } from "./scenarios";
 
-const DEFAULT_INGEST_URL = process.env["INGEST_URL"] ?? "http://localhost:4000/ingest";
+// The repo's .env, so the generator and the backend agree on URL and key.
+// loadEnvFile never overrides a variable already set in the shell.
+try {
+  process.loadEnvFile(resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env"));
+} catch {
+  // No .env: defaults below.
+}
+
+const DEFAULT_INGEST_URL = process.env["INGEST_URL"] || "http://localhost:4000/ingest";
+/** Sent as a bearer token when set; the backend requires it when it has one. */
+const INGEST_API_KEY = process.env["INGEST_API_KEY"]?.trim() || undefined;
 const POST_CHUNK_SIZE = 500;
 const LIVE_TICK_MS = 5_000;
 
@@ -137,13 +155,24 @@ async function send(entries: GeneratedEntry[], url: string): Promise<IngestResul
     try {
       response = await fetch(url, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(INGEST_API_KEY ? { authorization: `Bearer ${INGEST_API_KEY}` } : {}),
+        },
         body: JSON.stringify({ entries: chunk }),
       });
     } catch (cause) {
       throw new Error(
         `Could not reach the ingestion endpoint at ${url}. Is the backend running (\`pnpm backend\`)?`,
         { cause },
+      );
+    }
+
+    if (response.status === 401) {
+      throw new Error(
+        INGEST_API_KEY
+          ? "Ingest refused the key (401). INGEST_API_KEY differs between this shell and the backend."
+          : "Ingest requires a key (401). Set INGEST_API_KEY to the backend's value.",
       );
     }
 

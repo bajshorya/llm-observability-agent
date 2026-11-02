@@ -8,13 +8,17 @@ import { createObsClient, levelForStatus } from "./client";
 import { obsMiddleware } from "./middleware";
 import { templatePath } from "./path";
 
-type Call = { url: string; body: { entries: Array<Record<string, unknown>> } };
+type Call = {
+  url: string;
+  headers: Record<string, string>;
+  body: { entries: Array<Record<string, unknown>> };
+};
 
 function fakeFetch(statuses: number[] = []) {
   const calls: Call[] = [];
   const fn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as Call["body"];
-    calls.push({ url: String(url), body });
+    calls.push({ url: String(url), headers: (init?.headers ?? {}) as Record<string, string>, body });
     const status = statuses.shift() ?? 202;
     if (status === -1) throw new TypeError("fetch failed");
     const accepted = status >= 200 && status < 300 ? body.entries.length : 0;
@@ -56,6 +60,30 @@ describe("createObsClient", () => {
       metadata: { endpoint: "/orders/:id", statusCode: 500 },
     });
     expect(obs.stats()).toMatchObject({ sent: 1, dropped: 0, queued: 0 });
+  });
+
+  it("sends the ingest key as a bearer token, and nothing when it is empty", async () => {
+    const keyed = fakeFetch();
+    const { obs } = client(keyed.fn, { apiKey: "k3y" });
+    obs.info("hello");
+    await obs.close();
+    expect(keyed.calls[0]?.headers["authorization"]).toBe("Bearer k3y");
+
+    const open = fakeFetch();
+    const { obs: obs2 } = client(open.fn, { apiKey: "" });
+    obs2.info("hello");
+    await obs2.close();
+    expect(open.calls[0]?.headers).not.toHaveProperty("authorization");
+  });
+
+  it("does not retry a refused key, and drops the batch", async () => {
+    const { fn, calls } = fakeFetch([401]);
+    const { obs, errors } = client(fn, { apiKey: "wrong" });
+    obs.info("hello");
+    await obs.close();
+    expect(calls).toHaveLength(1);
+    expect(obs.stats()).toMatchObject({ dropped: 1, sent: 0 });
+    expect(errors[0]).toContain("HTTP 401");
   });
 
   it("splits into batches", async () => {
