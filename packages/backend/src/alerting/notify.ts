@@ -114,6 +114,8 @@ export async function sendPendingAlerts(options: SendAlertsOptions = {}): Promis
       severity: anomalies.severity,
       summary: anomalies.summary,
       isRealIncident: anomalies.isRealIncident,
+      injectionSuspected: anomalies.injectionSuspected,
+      injectionEvidence: anomalies.injectionEvidence,
     })
     .from(anomalies)
     .where(gte(anomalies.detectedAt, since))

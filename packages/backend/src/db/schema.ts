@@ -145,6 +145,15 @@ export const anomalies = sqliteTable(
      * first consumer that needs it later than the call that produced it.
      */
     affectedArea: text("affected_area"),
+    /**
+     * Set by Tier 2 BEFORE the model is called: whether the evidence packet
+     * contains text addressed to the model (classification/injection.ts), and
+     * the first such line. Null until a packet has been scanned. A flagged
+     * anomaly pages on the "injection" reason whatever the model concludes —
+     * including when the call fails, which is why it is written first.
+     */
+    injectionSuspected: integer("injection_suspected", { mode: "boolean" }),
+    injectionEvidence: text("injection_evidence"),
 
     status: text("status").$type<AnomalyStatus>().notNull().default("open"),
     createdAt: createdAt(),

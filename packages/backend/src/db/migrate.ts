@@ -153,6 +153,18 @@ export const migrations: readonly Migration[] = [
       }
     },
   },
+  {
+    version: 2,
+    name: "injection_guard",
+    up(sqlite) {
+      if (!hasColumn(sqlite, "anomalies", "injection_suspected")) {
+        sqlite.exec("ALTER TABLE anomalies ADD COLUMN injection_suspected integer");
+      }
+      if (!hasColumn(sqlite, "anomalies", "injection_evidence")) {
+        sqlite.exec("ALTER TABLE anomalies ADD COLUMN injection_evidence text");
+      }
+    },
+  },
 ];
 
 export const LATEST_VERSION = migrations.at(-1)?.version ?? 0;

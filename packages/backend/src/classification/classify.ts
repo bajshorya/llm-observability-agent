@@ -84,6 +84,7 @@ import {
   type ContextLogLine,
   type ContextSignature,
 } from "./context";
+import { scanForInjection, summariseFindings } from "./injection";
 import { CLASSIFIER_SYSTEM_PROMPT } from "./prompt";
 
 /** Sentinel endpoint for service-wide rollup rows. */
@@ -457,13 +458,25 @@ export async function classifyAnomalies(
 
   for (const anomaly of pending) {
     const input = await buildClassificationInput(anomaly);
+    const packet = renderClassificationContext(input);
+
+    /**
+     * Scanned and written BEFORE the call. An injection that makes the model
+     * fail to answer at all must still page, and a failed call persists
+     * nothing else. See classification/injection.ts.
+     */
+    const findings = scanForInjection(packet);
+    await db
+      .update(anomalies)
+      .set({ injectionSuspected: findings.length > 0, injectionEvidence: summariseFindings(findings) })
+      .where(eq(anomalies.id, anomaly.id));
 
     try {
       const { value, stats } = await generateStructured({
         provider,
         schema: classificationSchema,
         system: CLASSIFIER_SYSTEM_PROMPT,
-        user: renderClassificationContext(input),
+        user: packet,
         agent: "classifier",
         anomalyId: anomaly.id,
         onCall: recordLlmCall,
