@@ -13,7 +13,7 @@
  * root or from inside a package.
  *
  * WHAT IT CONFIGURES
- *   PORT, DATABASE_URL           the ingestion API and its store
+ *   PORT, HOST, DATABASE_URL     the ingestion API and its store
  *   INGEST_API_KEY               optional bearer key required by POST /ingest
  *   LLM_PROVIDER, LLM_MODEL      which model the agents call, and an override
  *   LLM_TEMPERATURE              sampling override, for repeatability runs
@@ -88,6 +88,13 @@ const envSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   PORT: envNumber(z.coerce.number().int().min(1).max(65535).default(4000)),
+  /**
+   * Interface the ingest server listens on. Loopback by default: with no
+   * INGEST_API_KEY, listening everywhere let anyone on the same network write
+   * logs — which is to say, write into the models' prompts. A deployment sets
+   * HOST=0.0.0.0 (a container must) and an INGEST_API_KEY with it.
+   */
+  HOST: z.string().trim().min(1).default("127.0.0.1"),
   /** `file:` prefix is optional and stripped by the db client. */
   DATABASE_URL: z.string().min(1).default("file:./data/dev.db"),
   /**

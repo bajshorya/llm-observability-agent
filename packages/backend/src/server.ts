@@ -32,9 +32,10 @@
  *   undefined is not the same as an absent key, and Fastify's types correctly
  *   reject it — so the ternary is load-bearing, not stylistic.
  *
- * AUTH
- * `POST /ingest` requires a bearer key when `INGEST_API_KEY` is set, and the
- * server warns at startup when it is not. `/health` stays open: it is what a
+ * AUTH, AND WHERE IT LISTENS
+ * Loopback only unless HOST says otherwise. `POST /ingest` requires a bearer
+ * key when `INGEST_API_KEY` is set, and the server warns at startup when it
+ * is reachable from other machines without one. `/health` stays open: it is what a
  * load balancer probes, and it writes nothing.
  *
  * SHUTDOWN
@@ -88,10 +89,11 @@ registerIngestRoute(app);
 
 async function start(): Promise<void> {
   try {
-    await app.listen({ port: env.PORT, host: "0.0.0.0" });
+    await app.listen({ port: env.PORT, host: env.HOST });
     app.log.info(`ingesting into ${databasePath}`);
-    if (env.INGEST_API_KEY === undefined) {
-      app.log.warn("INGEST_API_KEY is not set: anything that can reach this port can write logs.");
+    const loopback = env.HOST === "127.0.0.1" || env.HOST === "localhost" || env.HOST === "::1";
+    if (env.INGEST_API_KEY === undefined && !loopback) {
+      app.log.warn(`INGEST_API_KEY is not set and HOST is ${env.HOST}: anything that can reach this port can write logs.`);
     }
   } catch (error) {
     app.log.error(error);
