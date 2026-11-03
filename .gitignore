@@ -15,7 +15,7 @@ data/*.db-shm
 
 .DS_Store
 *.log
-
+interview-prep/
 # Local editor/tool settings — machine-specific
 .claude/settings.local.json
 .vscode/
