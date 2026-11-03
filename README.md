@@ -204,7 +204,7 @@ Statistics only. No LLM, no API key, no cost.
 pnpm detect                 # roll up, then run the detectors once
 pnpm detect --watch 30      # repeat every 30s
 pnpm detect --rollup-only   # just recompute aggregates
-pnpm test                   # 269 unit tests; 34 of them over the detectors and stats
+pnpm test                   # 352 tests; the detector and stats ones need no database
 ```
 
 A firing window looks like this:
@@ -591,7 +591,7 @@ an API key. In rough order of cost.
 ```bash
 pnpm install
 pnpm typecheck                  # strict TS across five packages
-pnpm test                       # 269 unit tests, ~1s, no network
+pnpm test                       # 352 tests, a few seconds, no network
 bash scripts/demo.sh            # the whole pipeline end to end
 ```
 
