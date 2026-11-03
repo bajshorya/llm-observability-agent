@@ -14,6 +14,15 @@
  *
  * One connection per server process, kept on globalThis so Next's dev-mode
  * module reloading does not open a new handle on every edit.
+ *
+ * OPENED ON FIRST QUERY, NOT ON IMPORT
+ * `next build` evaluates page modules to collect their configuration. With
+ * the connection opened at import, a build on a machine with no database (a
+ * fresh clone, a CI runner) failed with "No database at …", although every
+ * page is dynamic and none reads data at build time. CI passed for a while
+ * only because an earlier step happened to leave a database behind. `db` is
+ * therefore a proxy that opens the connection the first time anything is
+ * called on it.
  */
 
 import Database from "better-sqlite3";
@@ -40,4 +49,14 @@ function open(): Db {
   return drizzle(sqlite, { schema });
 }
 
-export const db: Db = globalForDb.obsDashboardDb ?? (globalForDb.obsDashboardDb = open());
+function connection(): Db {
+  return globalForDb.obsDashboardDb ?? (globalForDb.obsDashboardDb = open());
+}
+
+export const db: Db = new Proxy({} as Db, {
+  get(_target, property) {
+    const target = connection();
+    const value: unknown = Reflect.get(target, property, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+});
